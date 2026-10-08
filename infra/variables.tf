@@ -32,9 +32,3 @@ variable "lambda_reserved_concurrency" {
   type        = number
   default     = -1
 }
-
-variable "noncurrent_version_days" {
-  description = "Days to keep superseded versions of each month file in the data bucket (the undo-of-last-resort)."
-  type        = number
-  default     = 90
-}

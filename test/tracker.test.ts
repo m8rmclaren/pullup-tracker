@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MemoryStore } from '../src/lambda/store';
+import { MemoryDb } from '../src/lambda/db';
 import { handleSync } from '../src/lambda/sync';
-import type { SyncRequest } from '../src/shared/model';
+import type { Entry, SyncRequest, SyncResponse } from '../src/shared/model';
 import { HttpError, type KV, Tracker, type Transport, backoffMs } from '../src/app/tracker';
 
 class MemKV implements KV {
@@ -39,12 +39,22 @@ function makeTracker(transport: Transport, kv = new MemKV(), clock = new Clock()
   return { t, kv, clock };
 }
 
-const serverTransport = (store: MemoryStore): Transport => (req) => handleSync(store, JSON.parse(JSON.stringify(req)));
+const UID = 'u1';
+const ME = { id: UID, name: 'Me' };
+const EMPTY: SyncResponse = { entries: [], cursor: 0, me: ME };
+
+/** The server's sync logic for one account, with the request round-tripped through JSON like the wire. */
+const serve = async (db: MemoryDb, req: SyncRequest): Promise<SyncResponse> => {
+  const r = JSON.parse(JSON.stringify(req)) as SyncRequest;
+  return { ...(await handleSync(db, UID, r.push, r.since)), me: ME };
+};
+const serverTransport = (db: MemoryDb): Transport => (req) => serve(db, req);
+const stored = (db: MemoryDb, id: string): Entry | undefined => db.entries.get(UID)?.get(id);
 
 describe('Tracker', () => {
-  let store: MemoryStore;
+  let store: MemoryDb;
   beforeEach(() => {
-    store = new MemoryStore();
+    store = new MemoryDb();
   });
 
   it('records a tap locally and persists it before any network', () => {
@@ -54,7 +64,7 @@ describe('Tracker', () => {
     t.add(6);
     expect(t.all()).toHaveLength(1);
     expect(t.pendingCount()).toBe(1);
-    const reloaded = new Tracker({ storage: kv, transport: async () => ({ months: {} }) });
+    const reloaded = new Tracker({ storage: kv, transport: async () => EMPTY });
     expect(reloaded.all()[0]!.reps).toBe(6);
     expect(reloaded.pendingCount()).toBe(1);
   });
@@ -63,7 +73,7 @@ describe('Tracker', () => {
     const calls: SyncRequest[] = [];
     const { t, clock } = makeTracker(async (req) => {
       calls.push(req);
-      return handleSync(store, req);
+      return serve(store, req);
     });
     clock.timers = [];
     t.add(5);
@@ -82,7 +92,7 @@ describe('Tracker', () => {
     const gate = new Promise<void>((r) => (release = r));
     const { t } = makeTracker(async (req) => {
       await gate;
-      return handleSync(store, req);
+      return serve(store, req);
     });
     const e = t.add(5);
     const p = t.syncNow();
@@ -93,8 +103,7 @@ describe('Tracker', () => {
     expect(t.pendingCount()).toBe(1);
     await t.syncNow();
     expect(t.pendingCount()).toBe(0);
-    const server = await handleSync(store, { push: [], have: {} });
-    expect(server.months['2026-10']!.entries[0]!.reps).toBe(8);
+    expect(stored(store, e.id)!.reps).toBe(8);
   });
 
   it('two devices converge, including an edit and a delete made offline', async () => {
@@ -132,13 +141,39 @@ describe('Tracker', () => {
     expect(fresh.t.all().map((e) => e.reps).sort()).toEqual([5, 6]);
   });
 
+  it('sends its cursor, and starts over from 0 when the token changes', async () => {
+    const sent: number[] = [];
+    const { t } = makeTracker(async (req) => {
+      sent.push(req.since);
+      return { ...(await serve(store, req)), cursor: 1234 };
+    });
+    await t.syncNow();
+    await t.syncNow();
+    expect(t.account).toEqual(ME);
+    t.updateSettings({ token: 'another' });
+    expect(t.account).toBeNull();
+    await t.syncNow();
+    expect(sent).toEqual([0, 1234, 0]);
+  });
+
+  it('signing in keeps sets logged before joining and pushes them', async () => {
+    const { t } = makeTracker(serverTransport(store));
+    t.updateSettings({ token: '' });
+    const e = t.add(6);
+    await t.syncNow();
+    expect(t.status).toBe('unconfigured');
+    t.signIn('fresh-token', ME);
+    expect(t.account).toEqual(ME);
+    await t.syncNow();
+    expect(stored(store, e.id)!.reps).toBe(6);
+  });
+
   it('an undo before the first sync still reaches the server as a tombstone', async () => {
     const { t } = makeTracker(serverTransport(store));
     const e = t.add(5);
     t.remove(e.id);
     await t.syncNow();
-    const server = await handleSync(store, { push: [], have: {} });
-    expect(server.months['2026-10']!.entries[0]!.deleted).toBe(true);
+    expect(stored(store, e.id)!.deleted).toBe(true);
   });
 
   it('backs off on network failure and stops on a rejected token', async () => {
@@ -163,7 +198,7 @@ describe('Tracker', () => {
   });
 
   it('never lets a device clock that went backwards lose an edit', () => {
-    const { t, clock } = makeTracker(async () => ({ months: {} }));
+    const { t, clock } = makeTracker(async () => EMPTY);
     const e = t.add(5);
     clock.t -= 60_000;
     const edited = t.update(e.id, { reps: 7 })!;
@@ -184,7 +219,7 @@ describe('Tracker', () => {
   });
 
   it('the pad weight expires at the end of the day it was chosen', () => {
-    const { t } = makeTracker(async () => ({ months: {} }));
+    const { t } = makeTracker(async () => EMPTY);
     t.setPadLbs(45, '2026-10-08');
     expect(t.padLbs('2026-10-08')).toBe(45);
     expect(t.padLbs('2026-10-09')).toBe(0);
