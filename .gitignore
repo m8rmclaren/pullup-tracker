@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.devdata/
+infra/.terraform/
+infra/*.tfstate*
+infra/terraform.tfvars
+*.zip
+infra/.build/
+infra/.terraform.lock.hcl
