@@ -10,6 +10,14 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: pullup-tracker
+  GitHubOwnerId:
+    Type: String
+    Default: '49427552'
+    Description: Numeric owner id. Repos with immutable OIDC subjects send repo:OWNER@OWNER_ID/REPO@REPO_ID.
+  GitHubRepoId:
+    Type: String
+    Default: '1409794570'
+    Description: Numeric repo id (gh api repos/OWNER/REPO --jq .id).
   Branch:
     Type: String
     Default: main
@@ -94,7 +102,10 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/${Branch}'
+                # GitHub sends the id-pinned form when the repo uses immutable OIDC subjects (it can't match a deleted-and-recreated repo of the same name); the plain form covers the default.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/${Branch}'
+                  - !Sub 'repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/${Branch}'
       Policies:
         - PolicyName: deploy
           PolicyDocument:
