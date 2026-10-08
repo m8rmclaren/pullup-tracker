@@ -16,10 +16,15 @@ variable "domain_name" {
   default     = ""
 }
 
-variable "acm_certificate_arn" {
-  description = "ACM certificate in us-east-1 covering domain_name. Required when domain_name is set."
+variable "dns_zone_name" {
+  description = "Route 53 public hosted zone that domain_name lives in (e.g. example.com). Its certificate and alias records are created there. Required when domain_name is set."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.domain_name == "" || (var.dns_zone_name != "" && endswith(var.domain_name, ".${var.dns_zone_name}"))
+    error_message = "dns_zone_name must be set, and domain_name must be a subdomain of it."
+  }
 }
 
 variable "lambda_reserved_concurrency" {

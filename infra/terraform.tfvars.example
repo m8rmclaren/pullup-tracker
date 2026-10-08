@@ -1,4 +1,4 @@
 # Copy to terraform.tfvars (gitignored) and adjust.
 region = "us-west-2"
-# domain_name         = "pullups.example.com"
-# acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/..."
+# domain_name   = "pullups.example.com"
+# dns_zone_name = "example.com"

@@ -94,9 +94,12 @@ scripts/deploy.sh --site     # skip terraform; just rebuild and upload the site
 
 This uses the same remote state as CI, so the two never disagree.
 
-**Custom domain** (optional): request an ACM certificate for it in **us-east-1**, then
-pass `-var domain_name=… -var acm_certificate_arn=…`. In CI, add those as `-var` flags on
-the apply step. Point a CNAME/alias at the distribution.
+**Custom domain** (optional): the domain's zone must be a Route 53 public hosted zone, with
+its name servers set at the registrar. Set the repository variables `DOMAIN_NAME` (e.g.
+`pullups.example.com`) and `DNS_ZONE_NAME` (`example.com`), and pass the matching
+`DnsZoneId` and `DomainName` to the bootstrap stack so the deploy role may edit just those
+records. Terraform then issues the us-east-1 ACM certificate, validates it through DNS, and
+points A/AAAA alias records at the distribution. Locally, pass the same two values as `-var`s.
 
 ## How auth works
 

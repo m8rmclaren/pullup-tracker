@@ -5,7 +5,8 @@ resource "random_id" "suffix" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  suffix = random_id.suffix.hex
+  suffix        = random_id.suffix.hex
+  custom_domain = var.domain_name != ""
   # Created by infra/bootstrap.yaml; the deploy role may only create roles that carry it.
   lambda_boundary = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name}-lambda-boundary"
   # The SSM parameter holds SHA-256 hashes of valid tokens, never the tokens themselves.
@@ -300,7 +301,7 @@ resource "aws_cloudfront_distribution" "app" {
   price_class         = "PriceClass_100"
   http_version        = "http2and3"
   is_ipv6_enabled     = true
-  aliases             = var.domain_name == "" ? [] : [var.domain_name]
+  aliases             = local.custom_domain ? [var.domain_name] : []
 
   origin {
     origin_id                = "site"
@@ -349,9 +350,67 @@ resource "aws_cloudfront_distribution" "app" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = var.domain_name == ""
-    acm_certificate_arn            = var.domain_name == "" ? null : var.acm_certificate_arn
-    ssl_support_method             = var.domain_name == "" ? null : "sni-only"
-    minimum_protocol_version       = var.domain_name == "" ? "TLSv1" : "TLSv1.2_2021"
+    cloudfront_default_certificate = !local.custom_domain
+    acm_certificate_arn            = local.custom_domain ? aws_acm_certificate_validation.app[0].certificate_arn : null
+    ssl_support_method             = local.custom_domain ? "sni-only" : null
+    minimum_protocol_version       = local.custom_domain ? "TLSv1.2_2021" : "TLSv1"
+  }
+
+  lifecycle {
+    # The distribution is on a CloudFront flat-rate plan, which attaches its own WAF web ACL.
+    # Terraform can't manage the plan subscription yet, so leave the plan's ACL alone.
+    ignore_changes = [web_acl_id]
+  }
+}
+
+# ---------------------------------------------------------------- custom domain
+
+data "aws_route53_zone" "app" {
+  count        = local.custom_domain ? 1 : 0
+  name         = var.dns_zone_name
+  private_zone = false
+}
+
+resource "aws_acm_certificate" "app" {
+  count             = local.custom_domain ? 1 : 0
+  provider          = aws.us_east_1
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_route53_record" "cert_validation" {
+  for_each = local.custom_domain ? { for o in aws_acm_certificate.app[0].domain_validation_options : o.domain_name => o } : {}
+
+  zone_id         = data.aws_route53_zone.app[0].zone_id
+  name            = each.value.resource_record_name
+  type            = each.value.resource_record_type
+  records         = [each.value.resource_record_value]
+  ttl             = 300
+  allow_overwrite = true
+}
+
+# Waits until ACM sees the validation record, which needs the zone's name servers to be live at the registrar.
+resource "aws_acm_certificate_validation" "app" {
+  count                   = local.custom_domain ? 1 : 0
+  provider                = aws.us_east_1
+  certificate_arn         = aws_acm_certificate.app[0].arn
+  validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
+}
+
+resource "aws_route53_record" "app" {
+  for_each = local.custom_domain ? toset(["A", "AAAA"]) : toset([])
+
+  zone_id = data.aws_route53_zone.app[0].zone_id
+  name    = var.domain_name
+  type    = each.key
+
+  alias {
+    name                   = aws_cloudfront_distribution.app.domain_name
+    zone_id                = aws_cloudfront_distribution.app.hosted_zone_id
+    evaluate_target_health = false
   }
 }

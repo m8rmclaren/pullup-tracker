@@ -21,6 +21,14 @@ Parameters:
   Branch:
     Type: String
     Default: main
+  DnsZoneId:
+    Type: String
+    Default: Z03340042GDCTLVP4F3Z4
+    Description: Route 53 hosted zone for the custom domain. Empty skips the DNS and certificate permissions.
+  DomainName:
+    Type: String
+    Default: pullups.haydenroszell.com
+    Description: The only name (plus its ACM validation records) the deploy role may change in DnsZoneId.
   Prefix:
     Type: String
     Default: pullups
@@ -33,6 +41,7 @@ Parameters:
 
 Conditions:
   MakeProvider: !Equals [!Ref CreateOidcProvider, 'true']
+  HasDomain: !Not [!Equals [!Ref DnsZoneId, '']]
 
 Resources:
   GitHubOidcProvider:
@@ -141,6 +150,48 @@ Resources:
                 Effect: Allow
                 Action: ssm:DescribeParameters
                 Resource: '*'
+              - !If
+                - HasDomain
+                # RequestCertificate has no resource to scope to; everything after it is limited to us-east-1, where CloudFront needs it.
+                - Sid: RequestCertificate
+                  Effect: Allow
+                  Action: [acm:RequestCertificate, acm:AddTagsToCertificate]
+                  Resource: '*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasDomain
+                - Sid: ManageCertificates
+                  Effect: Allow
+                  Action: [acm:DescribeCertificate, acm:DeleteCertificate, acm:ListTagsForCertificate, acm:RemoveTagsFromCertificate]
+                  Resource: !Sub 'arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasDomain
+                - Sid: ReadDnsZone
+                  Effect: Allow
+                  Action: [route53:GetHostedZone, route53:ListResourceRecordSets, route53:ListTagsForResource]
+                  Resource: !Sub 'arn:aws:route53:::hostedzone/${DnsZoneId}'
+                - !Ref AWS::NoValue
+              - !If
+                - HasDomain
+                - Sid: FindDnsZoneAndWaitForChanges
+                  Effect: Allow
+                  Action: [route53:ListHostedZones, route53:ListHostedZonesByName, route53:GetChange]
+                  Resource: '*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasDomain
+                # Only the app's own name and its ACM validation records; the rest of the zone stays off limits.
+                - Sid: WriteAppRecords
+                  Effect: Allow
+                  Action: route53:ChangeResourceRecordSets
+                  Resource: !Sub 'arn:aws:route53:::hostedzone/${DnsZoneId}'
+                  Condition:
+                    ForAllValues:StringLike:
+                      route53:ChangeResourceRecordSetsNormalizedRecordNames:
+                        - !Ref DomainName
+                        - !Sub '_*.${DomainName}'
+                - !Ref AWS::NoValue
               - Sid: Logs
                 Effect: Allow
                 Action: [logs:CreateLogGroup, logs:DeleteLogGroup, logs:PutRetentionPolicy, logs:DeleteRetentionPolicy, logs:TagResource, logs:UntagResource, logs:ListTagsForResource, logs:TagLogGroup, logs:ListTagsLogGroup]

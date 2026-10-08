@@ -72,7 +72,11 @@ jobs:
           terraform_wrapper: false
       - run: scripts/tf-init.sh
       - name: terraform apply
-        run: terraform -chdir=infra apply -auto-approve -input=false -var "region=$AWS_REGION"
+        run: >-
+          terraform -chdir=infra apply -auto-approve -input=false
+          -var "region=$AWS_REGION"
+          -var "domain_name=${{ vars.DOMAIN_NAME }}"
+          -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}"
       - run: scripts/publish-site.sh
       - name: summary
         run: |
