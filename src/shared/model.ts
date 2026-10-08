@@ -60,7 +60,8 @@ export function mergeLists(base: Entry[], incoming: Entry[]): { entries: Entry[]
   return { entries: [...map.values()].sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1)), changed };
 }
 
-function normalize(e: Entry): Entry {
+/** Drops unknown and default-valued fields so stored and compared versions have one shape. */
+export function normalize(e: Entry): Entry {
   const out: Entry = { id: e.id, ts: e.ts, reps: e.reps, updatedAt: e.updatedAt };
   if (e.lbs) out.lbs = e.lbs;
   if (e.deleted) out.deleted = true;
@@ -105,18 +106,52 @@ export function formatLbs(lbs: number | undefined): string {
 /** Wire format of POST /api/sync. */
 export interface SyncRequest {
   push: Entry[];
-  /** month key -> ETag the client already holds; unchanged months are not resent. */
-  have: Record<string, string>;
+  /** The cursor from the previous response; 0 pulls everything. */
+  since: number;
 }
 
 export interface SyncResponse {
-  months: Record<string, { etag: string; entries: Entry[] }>;
+  /** Entries written since `since` (possibly a few already seen; merging them again is a no-op). */
+  entries: Entry[];
+  cursor: number;
+  me: Account;
 }
 
 export const MAX_PUSH = 1000;
 
-/** S3 object body for one Denver calendar month. */
-export interface MonthDoc {
-  v: 1;
-  entries: Entry[];
+export interface Account {
+  id: string;
+  name: string;
+}
+
+/** POST /api/join. `name` is required when the code is a friend invite and ignored for a device link. */
+export interface JoinRequest {
+  code: string;
+  name?: string;
+}
+
+export interface JoinResponse {
+  token: string;
+  me: Account;
+}
+
+export type InviteKind = 'friend' | 'device';
+
+/** POST /api/invite. */
+export interface InviteRequest {
+  kind: InviteKind;
+}
+
+export interface InviteResponse {
+  code: string;
+  expiresAt: number;
+}
+
+export const MAX_NAME = 24;
+
+/** Trims and collapses whitespace; null if nothing printable is left or it is too long. */
+export function cleanName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/\s+/g, ' ').trim();
+  return s.length >= 1 && [...s].length <= MAX_NAME ? s : null;
 }

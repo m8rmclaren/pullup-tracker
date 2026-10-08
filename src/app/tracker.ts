@@ -1,4 +1,4 @@
-import { type Entry, type SyncRequest, type SyncResponse, MAX_PUSH, MAX_REPS, MIN_REPS, clampLbs, mergeInto } from '../shared/model';
+import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_PUSH, MAX_REPS, MIN_REPS, clampLbs, mergeInto } from '../shared/model';
 
 export interface Settings {
   token: string;
@@ -40,7 +40,9 @@ interface Persisted {
   v: 1;
   entries: Entry[];
   outbox: string[];
-  etags: Record<string, string>;
+  /** Server cursor from the last sync; 0 means pull everything. */
+  cursor: number;
+  account: Account | null;
   settings: Settings;
   lastSyncAt: number | null;
 }
@@ -55,12 +57,14 @@ const MAX_BACKOFF_MS = 5 * 60_000;
 /**
  * The local replica. Every mutation lands here synchronously (so the UI never waits on
  * the network), is persisted, and its id goes into the outbox; a background sync then
- * pushes the outbox and pulls whatever months changed elsewhere.
+ * pushes the outbox and pulls whatever was written elsewhere since the last cursor.
  */
 export class Tracker {
   private entries = new Map<string, Entry>();
   private outbox = new Set<string>();
-  private etags: Record<string, string> = {};
+  private cursor = 0;
+  /** Who this device is signed in as, from the last sync or join. */
+  account: Account | null = null;
   settings: Settings = { ...DEFAULT_SETTINGS };
   lastSyncAt: number | null = null;
   status: SyncStatus = 'unconfigured';
@@ -151,12 +155,23 @@ export class Tracker {
     const tokenChanged = patch.token !== undefined && patch.token !== this.settings.token;
     this.settings = { ...this.settings, ...patch };
     if (tokenChanged) {
+      // A different token may be a different account; pull its whole history.
+      this.cursor = 0;
+      this.account = null;
       this.failures = 0;
       this.status = this.idleStatus();
     }
     this.persist();
     this.emit();
     if (tokenChanged) this.scheduleSync(0);
+  }
+
+  /** Adopts the token from a redeemed invite. Sets logged before joining are pushed to the new account. */
+  signIn(token: string, me: Account): void {
+    this.updateSettings({ token });
+    this.account = me;
+    this.persist();
+    this.emit();
   }
 
   /** Re-applies every entry, e.g. from a JSON export. Older versions lose to what is already here. */
@@ -201,10 +216,13 @@ export class Tracker {
     const sent = new Map(ids.map((id) => [id, this.entries.get(id)!.updatedAt]));
     this.setStatus('syncing');
     try {
-      const res = await this.deps.transport({ push: ids.map((id) => this.entries.get(id)!), have: { ...this.etags } }, this.settings.token);
-      for (const [month, doc] of Object.entries(res.months)) {
-        mergeInto(this.entries, doc.entries);
-        this.etags[month] = doc.etag;
+      const token = this.settings.token;
+      const res = await this.deps.transport({ push: ids.map((id) => this.entries.get(id)!), since: this.cursor }, token);
+      mergeInto(this.entries, res.entries);
+      // The token changed mid-request: this cursor belongs to the old account.
+      if (this.settings.token === token) {
+        this.cursor = res.cursor;
+        this.account = res.me;
       }
       // An entry edited again while the request was in flight stays queued.
       for (const [id, at] of sent) if (this.entries.get(id)?.updatedAt === at) this.outbox.delete(id);
@@ -217,7 +235,7 @@ export class Tracker {
       if (this.outbox.size > 0) this.rerun = true;
     } catch (err) {
       if (err instanceof HttpError && (err.status === 401 || err.status === 403)) {
-        this.lastError = err.status === 401 ? 'The server rejected this token.' : 'Forbidden by CloudFront — check the deploy.';
+        this.lastError = err.status === 401 ? 'This device was signed out. Open a new device link to sign back in.' : 'Forbidden by CloudFront — check the deploy.';
         this.setStatus('auth');
         return;
       }
@@ -258,7 +276,8 @@ export class Tracker {
       const p = JSON.parse(raw) as Persisted;
       this.entries = new Map(p.entries.map((e) => [e.id, e]));
       this.outbox = new Set(p.outbox.filter((id) => this.entries.has(id)));
-      this.etags = p.etags ?? {};
+      this.cursor = p.cursor ?? 0;
+      this.account = p.account ?? null;
       this.settings = Object.assign({ ...DEFAULT_SETTINGS }, p.settings);
       this.lastSyncAt = p.lastSyncAt ?? null;
     } catch {
@@ -271,7 +290,8 @@ export class Tracker {
       v: 1,
       entries: [...this.entries.values()],
       outbox: [...this.outbox],
-      etags: this.etags,
+      cursor: this.cursor,
+      account: this.account,
       settings: this.settings,
       lastSyncAt: this.lastSyncAt,
     };

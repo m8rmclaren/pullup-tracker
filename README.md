@@ -17,13 +17,15 @@ trends live one tab over.
 │ Preact app           │──────────▶│ CloudFront             │─────────▶│ S3: site bucket  │
 │ localStorage replica │  /*       │  security headers      │          └──────────────────┘
 │ outbox + sync loop   │           │                        │ OAC/SigV4┌──────────────────┐   ┌──────────────────────┐
-│ service worker       │──────────▶│  /api/*  (no cache)    │─────────▶│ Lambda (Function │──▶│ S3: data bucket      │
-└──────────────────────┘ /api/sync └────────────────────────┘          │ URL, AWS_IAM)    │   │ months/2026-10.json… │
-   X-Pullup-Token header                                               └────────┬─────────┘   │ (versioned)          │
-                                                                                │             └──────────────────────┘
-                                                                                ▼
-                                                                       SSM: token digests
+│ service worker       │──────────▶│  /api/*  (no cache)    │─────────▶│ Lambda (Function │──▶│ DynamoDB: one table  │
+└──────────────────────┘ /api/sync └────────────────────────┘          │ URL, AWS_IAM)    │   │ users, sets, day     │
+   X-Pullup-Token header  /api/join                                    └──────────────────┘   │ totals, tokens,      │
+   (one per device)       /api/invite                                                         │ invites  (PITR on)   │
+                                                                                              └──────────────────────┘
 ```
+
+Each person has their own account and log. People join by invite link, and every set
+also feeds per-day totals that a leaderboard can read in one query.
 
 ## Deploy
 
@@ -64,10 +66,15 @@ tick the IAM acknowledgement.) If the account already has a GitHub OIDC provider
 **3. Deploy.** Actions → pipeline → **Run workflow** (or push to `main`). The run summary
 prints the app URL. Until the variables exist, the deploy job is skipped, not failed.
 
-**4. Make a token.** In CloudShell, upload `scripts/token.sh` and run `bash token.sh new`.
-Open the app URL on your phone, tap **Set up sync**, and paste the token. Then use
-**Share → Add to Home Screen** (iOS) or **Install app** (Android/Chrome). Repeat the paste
-on each device; one shared token or one per device both work.
+**4. Invite yourself.** In CloudShell, upload `scripts/invite.sh` and run
+`bash invite.sh new`. It prints a single-use link. On iPhone, open the app URL in Safari,
+**Share → Add to Home Screen**, then open the home-screen app and paste the link under
+**Settings → Account**. A home-screen app keeps its own storage, apart from Safari's. On
+Android or desktop, just open the link and install the app afterwards.
+
+From then on, everything happens inside the app. **Settings → Invite a friend** makes a
+link for a new person, and **Add another device** makes a 15-minute link that signs another
+device into your own account.
 
 After that, merging to `main` is the deploy. Installed apps pick up a new version on their
 next launch.
@@ -75,14 +82,16 @@ next launch.
 ### What the CI role can do
 
 The deploy role (`github-deploy-pullups`) can only touch resources named `pullups-*`
-(buckets, Lambda, log group, SSM parameter) plus CloudFront, which has no useful
+(site bucket, Lambda, log group) and the `pullups` table, plus CloudFront, which has no useful
 resource-level scoping. It can create IAM roles only when they carry the
 `pullups-lambda-boundary` permissions boundary. The boundary caps any role it creates at
-what the API Lambda needs: read/write `months/*`, read the token parameter, and write logs.
+what the API Lambda needs: item reads and writes on the table, and writing logs. The
+deploy role can manage the table but not read or write its items.
 Without the boundary, "can create a role and a Lambda" amounts to "can become admin". The
 role's own name sits outside the `pullups-*` namespace, so it cannot edit itself.
 
-The data bucket has `prevent_destroy` in Terraform, so a bad change can't plan it away.
+The table has `prevent_destroy` in Terraform and deletion protection in AWS, so a bad
+change can't plan it away, and the deploy role has no `DeleteTable` permission anyway.
 
 ### Deploying from a laptop instead
 
@@ -107,40 +116,53 @@ There are two independent locks on the API, and no AWS credential ever reaches a
    request with SigV4 through Origin Access Control. Hitting the raw `*.lambda-url…` host
    directly returns 403. (For POST bodies OAC needs the payload hash, so the client sends
    `x-amz-content-sha256`; that's computed with WebCrypto and isn't a secret.)
-2. **Only you can get past the Lambda.** Every request carries `X-Pullup-Token`, a
-   256-bit random token. The Lambda hashes it and compares it in constant time against
-   the SHA-256 digests in the SSM parameter `/pullups/token-hashes`. The token is never
-   in the bundle, the repo, or AWS; it exists only in your devices' storage and in the
-   one-time output of `token.sh new`.
+2. **Only members get past the Lambda.** Every request to `/api/sync` and `/api/invite`
+   carries `X-Pullup-Token`, a 256-bit random token issued to that one device when it
+   redeemed an invite. The table stores only its SHA-256 digest (`T#<digest>` → user id),
+   so a leaked table backup grants no access. The Lambda caches lookups for a minute.
 
 A custom header is used instead of `Authorization` because OAC replaces `Authorization`
 with its own signature on the way to the origin.
 
-The site bucket and data bucket are both fully private (Block Public Access, owner-enforced
-objects). The Lambda's role can only Get/Put `months/*` in the data bucket, List under that
-prefix, and read the one SSM parameter.
+**Invites.** `POST /api/join { code, name }` is the only unauthenticated route. Codes are
+256-bit, single-use, and also stored only as digests. Redeeming one is a single DynamoDB
+transaction: it deletes the invite (conditional on it still existing), creates the device
+token and, for a friend invite, the new user. Two people racing for one link can't both
+win. Friend invites last 7 days and device links 15 minutes. Expiry is checked on redeem;
+DynamoDB TTL only tidies up later.
 
-### Rotating or revoking the token
+The site bucket is fully private (Block Public Access, owner-enforced objects). The
+Lambda's role can only read and write items in the one table.
 
-Run these from AWS CloudShell (upload `scripts/token.sh`) or anywhere else that has AWS credentials.
-They need only the AWS CLI and openssl.
+### Managing access
+
+Run these from AWS CloudShell (upload `scripts/invite.sh`) or anywhere else that has AWS
+credentials. They need only the AWS CLI and openssl.
 
 ```sh
-scripts/token.sh new             # add a new token; old ones keep working
-#   …paste the new token into Settings on each device…
-scripts/token.sh list            # see valid digests
-scripts/token.sh revoke 3fa9c1   # revoke the old one by digest prefix
-scripts/token.sh revoke-all      # lost a phone? kill everything, then `new`
+scripts/invite.sh new            # a friend-invite link (when no one is signed in yet)
+scripts/invite.sh users          # list accounts: id and name
+scripts/invite.sh device <id>    # lost every device? a link back into that account
+scripts/invite.sh revoke <id>    # sign every device of that account out
 ```
 
-Changes take effect within 60 seconds (the Lambda caches the digest list for a minute).
-No redeploy is needed. A device holding a revoked token shows **Token rejected**; it keeps
-logging locally and syncs once you paste a valid token.
+A revoked device stops syncing within 60 seconds and shows **Signed out**. It keeps
+logging locally, and those sets are pushed once it signs in again with a device link.
 
 ## Data layout and sync
 
-**One JSON file per Denver calendar month:** `s3://<data-bucket>/months/2026-10.json`,
-holding `{ v: 1, entries: [...] }`. Each entry is one set:
+**One DynamoDB table** (on-demand) holds everything. The key layout is documented at the
+top of `src/lambda/dynamodb.ts`:
+
+| pk | sk | item |
+|---|---|---|
+| `U#<uid>` | `P` | profile: name |
+| `U#<uid>` | `E#<id>` | one set, plus `srv`, the server time it was written |
+| `U#<uid>` | `D#2026-10-08` | that user's day total: reps, sets, best set |
+| `T#<digest>` | `T` | device token → user id |
+| `I#<digest>` | `I` | pending invite |
+
+Each set is stored as:
 
 ```json
 { "id": "9f2c…", "ts": 1791489600000, "reps": 6, "updatedAt": 1791489600000 }
@@ -152,20 +174,29 @@ A deleted set stays as a tombstone with `"deleted": true` so the delete itself c
 **No lost writes, by construction.** The entry set is a state-based CRDT: per-entry
 last-writer-wins with a deterministic tiebreak (delete beats edit on a same-millisecond tie).
 Merging is commutative, associative and idempotent, so devices converge regardless of
-order, duplicates or retries. On the server, the Lambda merges a push into the month file
-with an **S3 conditional write** (`If-Match` on the ETag, or `If-None-Match: *` to create).
-If another request wrote first, S3 answers 412, and the Lambda re-reads, re-merges and
-retries. Two phones syncing at the same instant, or ten fast taps in flight, cannot
-overwrite each other. A test fires 12 concurrent pushes through an interleaving store to
-prove it, and it fails if the conditional write is removed.
+order, duplicates or retries. On the server, each pushed set is merged against the stored
+version and written with a **conditional put** on that version's `srv`. `srv` strictly
+increases per set, so a concurrent writer is always detected. When one is, the Lambda
+re-reads, re-merges and retries. A test fires 12 concurrent pushes through an
+interleaving store to prove it, and the same suite runs against DynamoDB Local in CI.
 
-**One endpoint.** `POST /api/sync { push: Entry[], have: { "2026-10": "<etag>", … } }`
-pushes the outbox and returns only the months whose ETag differs from what the client
-already has. A no-change sync is one `LIST` plus nothing else, and a fresh device gets
-everything in one round trip.
+**Day totals for the leaderboard.** After writing, the Lambda recomputes the total for
+every Denver day a push touched, both the old and new day when a set moves. It sums that
+day's sets through the `by-ts` index and writes the result conditional on the total's
+version, so a stale recompute can't overwrite a newer one. Day totals carry `mpk` =
+`M#2026-10`, which puts every user's days for a month in the `by-month` GSI, so a board
+for any period is one query. A retried push recomputes even when its sets were already
+written, which heals a request that died between the two steps.
 
-Month files stay small (~6 sets/day ≈ 15 KB/month), so whole-file rewrites are cheap.
-The bucket is **versioned**, with superseded versions kept 90 days, as a manual escape hatch.
+**Delta sync.** `POST /api/sync { push: Entry[], since: <cursor> }` pushes the outbox and
+returns every set of yours written after the cursor (queried via the `by-srv` index), plus
+a new cursor. The cursor deliberately trails the server clock by 30 s, longer than the
+Lambda timeout, so a write that was stamped but still in flight can never slip behind
+it. The cost is that a recent write is sent back once more, which the merge ignores. A
+fresh device sends `since: 0` and gets everything in one round trip.
+
+**Backups.** Point-in-time recovery is on, so the table can be restored to any second
+in the last 35 days.
 
 ## Offline behavior
 
@@ -182,29 +213,30 @@ The bucket is **versioned**, with superseded versions kept 90 days, as a manual 
 - **The app shell is precached** by a small hand-written service worker, so the app opens
   with no signal at all. The `/api` path is never cached.
 - The pill in the top right always says where things stand: *Synced*, *3 pending*,
-  *Offline · 3*, *Token rejected*, or *Set up sync*.
+  *Offline · 3*, *Signed out*, or *Sign in*.
+- **Logging works before you join.** Sets logged without an account stay on the device,
+  and they're pushed to your account the moment you redeem an invite or device link.
 
-If `localStorage` is wiped (or you sign in on a new device), pasting the token pulls the
-full history back from S3. Anything that never synced before the wipe is gone, which is
-why the outbox count is always visible.
+If `localStorage` is wiped, a device link from another of your devices (or from
+`invite.sh device`) pulls the full history back. Anything that never synced before the
+wipe is gone, which is why the outbox count is always visible.
 
 ## Design decisions
 
-**Lambda Function URL + token, not Cognito.** Cognito with an identity pool would mean
-shipping a user-pool client, handling refresh tokens, and writing an IAM policy scoped to an
-S3 prefix that still allows clobbering the whole month file. A single user doesn't need
-any of that. A Function URL behind CloudFront OAC costs nothing idle, keeps the API
-same-origin (no CORS), and puts all merge logic server-side where conditional writes make
-it race-free. The browser never touches S3 directly, so it can never write a malformed or
-partial file.
+**Invite links + per-device tokens, not Cognito or Sign in with Google.** Everyone on the
+board is someone a member invited, so there's nothing to recover a password for. A lost
+device is fixed with a device link from another device, or from `invite.sh device`. This
+keeps the browser side to one header, and the API stays a Function URL behind CloudFront
+OAC: it costs nothing idle, it's same-origin (no CORS), and all merge logic runs
+server-side where conditional writes make it race-free.
 
-**Month files, not one object per set.** One-object-per-event is trivially race-free but
-makes every read a LIST plus thousands of GETs within a year. A single all-time file is one
-GET but gets bigger and more contended forever. Monthly files keep reads tiny and
-incremental (ETags per month) and contention local, and conditional writes remove the
-race that usually rules out read-modify-write.
+**DynamoDB, not S3.** This started as one JSON file per month in S3, which was ideal for a
+single person. A leaderboard needs totals across users, which in S3 means reading every
+user's files on every view. In DynamoDB each set is its own item, so a push writes only
+what changed and a sync reads only what's new. The per-day totals sit in an index that
+answers "everyone's October" with one query.
 
-**Days are computed in America/Denver everywhere**, regardless of the device's zone, via
+**Days are computed in America/Denver everywhere**, for every user, regardless of the device's zone, via
 `Intl.DateTimeFormat`. Day keys are `YYYY-MM-DD` strings with pure calendar arithmetic, so
 the 23- and 25-hour DST days count as one day each. Sets entered by hand
 (“Other amount or time…”) take a Denver wall-clock time. A time skipped by spring-forward
@@ -253,8 +285,9 @@ a settings file. It's a one-time setting, so that wasn't worth the extra moving 
 **Dark-first** (gym lighting, OLED), with a light theme that follows the OS. System
 rounded font with tabular numerals, so digits don't jump as totals change.
 
-**Cost.** Effectively zero at this volume. A few hundred Lambda invocations and S3
-requests a day sit inside the free tiers, and the SSM standard parameter is free.
+**Cost.** Effectively zero at this volume. A few hundred Lambda invocations and on-demand
+DynamoDB requests a day sit inside the free tiers, and PITR on a table this small is
+fractions of a cent.
 CloudFront's always-free tier covers it. To bound worst-case cost from someone hammering
 the URL with bad tokens, set `lambda_reserved_concurrency` (e.g. `2`). It defaults to off
 because new AWS accounts often can't reserve concurrency.
@@ -263,9 +296,13 @@ because new AWS accounts often can't reserve concurrency.
 
 ```sh
 npm install
-npm run dev        # builds, then serves on http://localhost:5173 with the real sync handler
-                   # over a file-backed store in .devdata/ — token: dev-token-change-me
-npm test           # vitest
+npm run dev        # builds, then serves on http://localhost:5173 with the real API handler
+                   # over an in-memory db saved to .devdata/; prints a join link and a
+                   # device link for the seeded "Dev" account
+npm test           # vitest (DynamoDB adapter tests skip without DYNAMODB_ENDPOINT)
+
+docker run --rm -p 8000:8000 amazon/dynamodb-local
+DYNAMODB_ENDPOINT=http://localhost:8000 npm test    # also runs them against DynamoDB Local
 npm run typecheck
 npm run check      # both
 npm run build      # dist/site (static) + dist/lambda/index.js
@@ -282,25 +319,32 @@ The service worker is skipped on `localhost` so dev reloads aren't served stale.
   completed-day averages, week-to-date comparison, best day, empty history.
 - `test/model.test.ts`: LWW tiebreaks, commutativity/associativity/idempotence, an edit
   that moves a set across a month boundary, input validation.
-- `test/server-sync.test.ts`: month partitioning, ETag-based incremental pulls, **12
-  concurrent writers losing nothing**, concurrent edit vs. delete, auth with overlapping
-  rotated tokens, and bad input.
+- `test/server-sync.test.ts`: delta sync and the cursor lag (including a write that
+  commits after a later sync started), day totals through edits, deletes and moves, healing
+  a total on retry, **12 concurrent writers losing nothing**, concurrent edit vs. delete,
+  stale recomputes, per-user isolation, friend invites and device links (single-use,
+  expiry), and bad input.
+- `test/dynamodb.test.ts`: the DynamoDB adapter against DynamoDB Local. It covers the
+  conditional puts, both LSIs across query pages, the month GSI, concurrent syncs, and
+  three people racing to redeem one invite.
 - `test/tracker.test.ts`: the client replica. It covers persistence before network,
   debounced batching, an edit during an in-flight push, two devices converging after
-  offline edit/delete conflicts, a fresh device pulling history, undo before first sync,
-  backoff, and stopping on a rejected token.
+  offline edit/delete conflicts, a fresh device pulling history, the cursor and its reset
+  on account change, sets logged before joining, undo before first sync, backoff, and
+  stopping when signed out.
 - `test/handler.test.ts`: the Lambda entrypoint. It covers Function URL events, base64
-  bodies, and SSM digest caching.
+  bodies, token-lookup caching, and opaque 500s.
 
 ## Layout
 
 ```
 src/shared/   time.ts (Denver calendar), model.ts (entries + CRDT merge), stats.ts
-src/lambda/   handler.ts → http.ts (route/auth) → sync.ts (conditional-write merge) → s3store.ts
+src/lambda/   handler.ts → http.ts (routes) → sync.ts (merge + day totals), accounts.ts (invites)
+              → db.ts (interface + in-memory) / dynamodb.ts
 src/app/      tracker.ts (local replica + sync engine), api.ts, App/Today/Trends/sheets/charts, sw.ts
 src/dev/      local server used by `npm run dev`
-infra/        Terraform: buckets, CloudFront + OACs, Lambda + URL, SSM parameter
+infra/        Terraform: site bucket, DynamoDB table, CloudFront + OACs, Lambda + URL
               bootstrap.yaml: one-time CloudFormation for CI (OIDC role, state bucket, boundary)
-scripts/      build.mjs, dev.mjs, deploy.sh, tf-init.sh, publish-site.sh, token.sh, make-icons.py
+scripts/      build.mjs, dev.mjs, deploy.sh, tf-init.sh, publish-site.sh, invite.sh, make-icons.py
 .github/      pipeline.yml: check on every push/PR, deploy on main
 ```

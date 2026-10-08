@@ -71,14 +71,10 @@ Resources:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Action: [s3:GetObject, s3:PutObject]
-            Resource: !Sub 'arn:aws:s3:::${Prefix}-data-*/months/*'
-          - Effect: Allow
-            Action: s3:ListBucket
-            Resource: !Sub 'arn:aws:s3:::${Prefix}-data-*'
-          - Effect: Allow
-            Action: ssm:GetParameter
-            Resource: !Sub 'arn:aws:ssm:*:${AWS::AccountId}:parameter/${Prefix}/*'
+            Action: [dynamodb:GetItem, dynamodb:BatchGetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:ConditionCheckItem]
+            Resource:
+              - !Sub 'arn:aws:dynamodb:*:${AWS::AccountId}:table/${Prefix}'
+              - !Sub 'arn:aws:dynamodb:*:${AWS::AccountId}:table/${Prefix}/index/*'
           - Effect: Allow
             Action: [logs:CreateLogStream, logs:PutLogEvents]
             Resource: !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/${Prefix}-*'
@@ -122,9 +118,21 @@ Resources:
                 Action: s3:*
                 Resource:
                   - !Sub 'arn:aws:s3:::${Prefix}-site-*'
-                  - !Sub 'arn:aws:s3:::${Prefix}-data-*'
                   - !Sub 'arn:aws:s3:::${Prefix}-site-*/*'
-                  - !Sub 'arn:aws:s3:::${Prefix}-data-*/*'
+              # Table management only; deliberately no item reads or writes.
+              - Sid: Table
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:Describe*
+                  - dynamodb:GetResourcePolicy
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:ListTagsOfResource
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource: !Sub 'arn:aws:dynamodb:*:${AWS::AccountId}:table/${Prefix}'
               - Sid: Lambda
                 Effect: Allow
                 Action: lambda:*
@@ -132,14 +140,6 @@ Resources:
               - Sid: CloudFront
                 Effect: Allow
                 Action: cloudfront:*
-                Resource: '*'
-              - Sid: TokenParameter
-                Effect: Allow
-                Action: [ssm:PutParameter, ssm:GetParameter, ssm:GetParameters, ssm:DeleteParameter, ssm:AddTagsToResource, ssm:RemoveTagsFromResource, ssm:ListTagsForResource]
-                Resource: !Sub 'arn:aws:ssm:*:${AWS::AccountId}:parameter/${Prefix}/*'
-              - Sid: DescribeParameters
-                Effect: Allow
-                Action: ssm:DescribeParameters
                 Resource: '*'
               - Sid: Logs
                 Effect: Allow

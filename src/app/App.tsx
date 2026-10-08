@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { type Entry, formatLbs } from '../shared/model';
 import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
+import { parseInviteLink } from './api';
 import { useNow, useTracker } from './hooks';
-import { DaySheet, EntrySheet, PadWeightSheet, SettingsSheet } from './sheets';
+import { DaySheet, EntrySheet, JoinSheet, PadWeightSheet, type PendingInvite, SettingsSheet } from './sheets';
 import { Today } from './Today';
 import type { Tracker } from './tracker';
 import { Trends } from './Trends';
@@ -14,6 +15,7 @@ type SheetState =
   | { kind: 'day'; day: string }
   | { kind: 'settings' }
   | { kind: 'weight' }
+  | { kind: 'join'; invite: PendingInvite }
   | null;
 
 interface Toast {
@@ -28,7 +30,14 @@ export function App({ tracker }: { tracker: Tracker }) {
   const version = useTracker(tracker);
   const now = useNow();
   const [tab, setTab] = useState<'today' | 'trends'>('today');
-  const [sheet, setSheet] = useState<SheetState>(null);
+  const [sheet, setSheet] = useState<SheetState>(() => {
+    // An opened invite link lands here; the code is taken out of the URL so a reload or a
+    // shared screenshot doesn't carry it along.
+    const invite = parseInviteLink(location.hash);
+    if (!invite) return null;
+    history.replaceState(null, '', location.pathname + location.search);
+    return { kind: 'join', invite };
+  });
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -138,7 +147,8 @@ export function App({ tracker }: { tracker: Tracker }) {
           onAdd={() => setSheet({ kind: 'add', day: sheet.day })}
         />
       ) : null}
-      {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={close} /> : null}
+      {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={close} onOpenInvite={(invite) => setSheet({ kind: 'join', invite })} /> : null}
+      {sheet?.kind === 'join' ? <JoinSheet tracker={tracker} invite={sheet.invite} onClose={close} /> : null}
       {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} now={now} onClose={close} /> : null}
     </div>
   );
@@ -156,8 +166,8 @@ function pillText(t: Tracker): string {
     case 'offline':
       return n ? `Offline · ${n}` : 'Offline';
     case 'auth':
-      return 'Token rejected';
+      return 'Signed out';
     case 'unconfigured':
-      return 'Set up sync';
+      return 'Sign in';
   }
 }

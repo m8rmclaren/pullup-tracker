@@ -8,8 +8,6 @@ locals {
   suffix = random_id.suffix.hex
   # Created by infra/bootstrap.yaml; the deploy role may only create roles that carry it.
   lambda_boundary = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name}-lambda-boundary"
-  # The SSM parameter holds SHA-256 hashes of valid tokens, never the tokens themselves.
-  token_param = "/${var.name}/token-hashes"
 }
 
 # ---------------------------------------------------------------- site bucket
@@ -57,65 +55,83 @@ resource "aws_s3_bucket_policy" "site" {
   depends_on = [aws_s3_bucket_public_access_block.site]
 }
 
-# ---------------------------------------------------------------- data bucket
+# ---------------------------------------------------------------- data table
 
-resource "aws_s3_bucket" "data" {
-  bucket = "${var.name}-data-${local.suffix}"
+# One table for every user. Key layout is documented in src/lambda/dynamodb.ts. Device
+# tokens and invite codes are stored only as SHA-256 digests.
+resource "aws_dynamodb_table" "data" {
+  name                        = var.name
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  range_key                   = "sk"
+  deletion_protection_enabled = true
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+  attribute {
+    name = "srv"
+    type = "N"
+  }
+  attribute {
+    name = "ts"
+    type = "N"
+  }
+  attribute {
+    name = "mpk"
+    type = "S"
+  }
+  attribute {
+    name = "msk"
+    type = "S"
+  }
+
+  # A user's entries by server write time: the delta-sync cursor.
+  local_secondary_index {
+    name            = "by-srv"
+    range_key       = "srv"
+    projection_type = "ALL"
+  }
+
+  # A user's entries by when the set was done: recomputing one day's total.
+  local_secondary_index {
+    name            = "by-ts"
+    range_key       = "ts"
+    projection_type = "ALL"
+  }
+
+  # Every user's day totals for a month: the leaderboard.
+  global_secondary_index {
+    name            = "by-month"
+    projection_type = "ALL"
+    key_schema {
+      attribute_name = "mpk"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "msk"
+      key_type       = "RANGE"
+    }
+  }
+
+  # Invites carry `ttl`; expiry is also checked on redeem since TTL deletion lags.
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  # The undo of last resort: restore the table to any second in the last 35 days.
+  point_in_time_recovery {
+    enabled = true
+  }
+
   lifecycle {
     prevent_destroy = true
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "data" {
-  bucket                  = aws_s3_bucket.data.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_ownership_controls" "data" {
-  bucket = aws_s3_bucket.data.id
-  rule {
-    object_ownership = "BucketOwnerEnforced"
-  }
-}
-
-# Every write replaces a month file; versioning keeps the previous copies so a bad
-# write (or a bug) can be rolled back by hand.
-resource "aws_s3_bucket_versioning" "data" {
-  bucket = aws_s3_bucket.data.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "data" {
-  bucket = aws_s3_bucket.data.id
-  rule {
-    id     = "expire-old-versions"
-    status = "Enabled"
-    filter {}
-    noncurrent_version_expiration {
-      noncurrent_days = var.noncurrent_version_days
-    }
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 1
-    }
-  }
-  depends_on = [aws_s3_bucket_versioning.data]
-}
-
-# ---------------------------------------------------------------- token
-
-resource "aws_ssm_parameter" "token_hashes" {
-  name        = local.token_param
-  description = "Comma-separated SHA-256 hex digests of valid API tokens. Managed by scripts/token.sh."
-  # A digest of a 256-bit random token reveals nothing usable, so this need not be a SecureString.
-  type  = "String"
-  value = "unset"
-  lifecycle {
-    ignore_changes = [value]
   }
 }
 
@@ -145,24 +161,9 @@ resource "aws_iam_role" "api" {
 
 data "aws_iam_policy_document" "api" {
   statement {
-    sid       = "MonthFiles"
-    actions   = ["s3:GetObject", "s3:PutObject"]
-    resources = ["${aws_s3_bucket.data.arn}/months/*"]
-  }
-  statement {
-    sid       = "ListMonths"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.data.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["months/*"]
-    }
-  }
-  statement {
-    sid       = "TokenHashes"
-    actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.token_hashes.arn]
+    sid       = "Data"
+    actions   = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"]
+    resources = [aws_dynamodb_table.data.arn, "${aws_dynamodb_table.data.arn}/index/*"]
   }
   statement {
     sid       = "Logs"
@@ -181,6 +182,8 @@ resource "aws_cloudwatch_log_group" "api" {
   retention_in_days = 30
 }
 
+# `timeout` must stay well under LAG_MS in src/lambda/sync.ts, or a slow write could slip
+# behind a sync cursor.
 resource "aws_lambda_function" "api" {
   function_name                  = "${var.name}-api"
   role                           = aws_iam_role.api.arn
@@ -195,8 +198,7 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DATA_BUCKET = aws_s3_bucket.data.bucket
-      TOKEN_PARAM = aws_ssm_parameter.token_hashes.name
+      TABLE = aws_dynamodb_table.data.name
     }
   }
 

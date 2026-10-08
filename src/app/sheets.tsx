@@ -1,8 +1,9 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type Entry, MAX_LBS, MAX_REPS, MIN_REPS, clampLbs, formatLbs, isValidEntry } from '../shared/model';
+import { type Entry, type InviteKind, MAX_LBS, MAX_NAME, MAX_REPS, MIN_REPS, clampLbs, formatLbs, isValidEntry } from '../shared/model';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallToEpoch } from '../shared/time';
+import { createInvite, inviteLink, join, parseInviteLink } from './api';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
 
@@ -241,30 +242,146 @@ const STATUS_TEXT: Record<Tracker['status'], string> = {
   syncing: 'Syncing…',
   pending: 'Changes waiting to sync',
   offline: "Can't reach the server — will retry",
-  auth: 'Token rejected',
-  unconfigured: 'Sync is not set up',
+  auth: 'Signed out',
+  unconfigured: 'Not signed in — sets stay on this device',
 };
 
-export function SettingsSheet({ tracker, onClose }: { tracker: Tracker; onClose: () => void }) {
-  const [token, setToken] = useState(tracker.settings.token);
-  const [show, setShow] = useState(false);
+export interface PendingInvite {
+  kind: InviteKind;
+  code: string;
+}
+
+export function JoinSheet({ tracker, invite, onClose }: { tracker: Tracker; invite: PendingInvite; onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const friend = invite.kind === 'friend';
+  const current = tracker.settings.token ? tracker.account : null;
+
+  const submit = async (e: Event) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await join({ code: invite.code, name: friend ? name : undefined });
+      tracker.signIn(res.token, res.me);
+      void tracker.syncNow();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet title={friend ? 'Join' : 'Sign in this device'} onClose={onClose}>
+      <form onSubmit={(e) => void submit(e)}>
+        <p class="muted">
+          {friend
+            ? "You've been invited. Pick the name others will see on the board."
+            : 'This link signs this device into your account. Sets already logged here are added to it.'}
+        </p>
+        {current ? <p class="muted small">This device is signed in as {current.name}; continuing switches it.</p> : null}
+        {friend ? (
+          <label class="field">
+            <span>Your name</span>
+            <input type="text" maxLength={MAX_NAME} autocomplete="nickname" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+          </label>
+        ) : null}
+        {error ? <p class="muted small">{error}</p> : null}
+        <div class="sheet__actions">
+          <button type="submit" class="btn btn--primary" disabled={busy || (friend && !name.trim())}>
+            {busy ? 'Joining…' : friend ? 'Join' : 'Sign in'}
+          </button>
+        </div>
+      </form>
+    </Sheet>
+  );
+}
+
+const INVITE_NOTE: Record<InviteKind, string> = {
+  friend: 'Works once and expires in 7 days.',
+  device: 'Open it on your other device within 15 minutes. On iPhone, paste it under Settings in the home-screen app, not Safari.',
+};
+
+function AccountSection({ tracker, onOpenInvite }: { tracker: Tracker; onOpenInvite: (invite: PendingInvite) => void }) {
+  const [link, setLink] = useState<{ kind: InviteKind; url: string } | null>(null);
+  const [pasted, setPasted] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+  const token = tracker.settings.token;
+
+  const make = async (kind: InviteKind) => {
+    setNote(null);
+    try {
+      const res = await createInvite(kind, token);
+      setLink({ kind, url: inviteLink(kind, res.code) });
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const share = async () => {
+    if (!link) return;
+    try {
+      if (navigator.share) await navigator.share({ url: link.url });
+      else {
+        await navigator.clipboard.writeText(link.url);
+        setNote('Copied.');
+      }
+    } catch {}
+  };
+  const usePasted = () => {
+    const invite = parseInviteLink(pasted);
+    if (invite) onOpenInvite(invite);
+    else setNote("That doesn't look like an invite or device link.");
+  };
+
+  return (
+    <>
+      {token ? (
+        <>
+          <p>
+            Signed in as <b>{tracker.account?.name ?? '…'}</b>
+          </p>
+          <div class="sheet__actions sheet__actions--inline">
+            <button type="button" class="btn" onClick={() => void make('friend')}>
+              Invite a friend
+            </button>
+            <button type="button" class="btn" onClick={() => void make('device')}>
+              Add another device
+            </button>
+          </div>
+          {link ? (
+            <>
+              <div class="field">
+                <div class="token-row">
+                  <input type="text" readOnly aria-label="Link to send" value={link.url} onFocus={(e) => (e.target as HTMLInputElement).select()} />
+                  <button type="button" class="btn-text" onClick={() => void share()}>
+                    {'share' in navigator ? 'Share' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+              <p class="muted small">{INVITE_NOTE[link.kind]}</p>
+            </>
+          ) : null}
+        </>
+      ) : null}
+      <label class="field">
+        <span>{token ? 'Have a link for another account?' : 'Paste an invite or device link'}</span>
+        <div class="token-row">
+          <input type="text" autocomplete="off" autocapitalize="off" spellcheck={false} value={pasted} onInput={(e) => setPasted((e.target as HTMLInputElement).value)} />
+          <button type="button" class="btn-text" onClick={usePasted} disabled={!pasted.trim()}>
+            Use
+          </button>
+        </div>
+      </label>
+      {note ? <p class="muted small">{note}</p> : null}
+    </>
+  );
+}
+
+export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tracker; onClose: () => void; onOpenInvite: (invite: PendingInvite) => void }) {
   const [msg, setMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-
-  const tokenInput = {
-    autocomplete: 'off',
-    autocapitalize: 'off',
-    spellcheck: false,
-    placeholder: 'Paste the token from deploy',
-    value: token,
-    onInput: (e: Event) => setToken((e.target as HTMLInputElement).value),
-  } as const;
-
-  const saveToken = () => {
-    tracker.updateSettings({ token: token.trim() });
-    void tracker.syncNow();
-    setMsg('Saved. Syncing…');
-  };
 
   const download = (name: string, type: string, body: string) => {
     const url = URL.createObjectURL(new Blob([body], { type }));
@@ -307,24 +424,18 @@ export function SettingsSheet({ tracker, onClose }: { tracker: Tracker; onClose:
         <p class="muted small">
           {tracker.lastSyncAt ? `Last synced ${formatDay(dayKey(tracker.lastSyncAt))} at ${formatClock(tracker.lastSyncAt)}` : 'Never synced from this device'}
         </p>
-        <label class="field">
-          <span>Access token</span>
-          <div class="token-row">
-            {show ? <input type="text" {...tokenInput} /> : <input type="password" {...tokenInput} />}
-            <button type="button" class="btn-text" onClick={() => setShow(!show)}>
-              {show ? 'Hide' : 'Show'}
+        {tracker.settings.token ? (
+          <div class="sheet__actions sheet__actions--inline">
+            <button type="button" class="btn" onClick={() => void tracker.syncNow()}>
+              Sync now
             </button>
           </div>
-        </label>
-        <div class="sheet__actions sheet__actions--inline">
-          <button type="button" class="btn btn--primary" onClick={saveToken} disabled={!token.trim()}>
-            Save &amp; sync
-          </button>
-          <button type="button" class="btn" onClick={() => void tracker.syncNow()} disabled={!tracker.settings.token}>
-            Sync now
-          </button>
-        </div>
-        {msg ? <p class="muted small">{msg}</p> : null}
+        ) : null}
+      </section>
+
+      <section class="settings-sec">
+        <h3>Account</h3>
+        <AccountSection tracker={tracker} onOpenInvite={onOpenInvite} />
       </section>
 
       <section class="settings-sec">
@@ -356,6 +467,7 @@ export function SettingsSheet({ tracker, onClose }: { tracker: Tracker; onClose:
             }}
           />
         </div>
+        {msg ? <p class="muted small">{msg}</p> : null}
       </section>
       <p class="muted small version">Build {__BUILD_ID__}</p>
     </Sheet>

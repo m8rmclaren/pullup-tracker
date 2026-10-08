@@ -1,24 +1,20 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
+/** Tokens and invite codes are stored only as this digest, so a leaked table grants nothing. */
 export function hashToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
-/** `validHashes` are hex SHA-256 digests; more than one is valid at once during a rotation. */
-export function tokenMatches(token: string | undefined, validHashes: string[]): boolean {
-  if (!token || token.length < 16 || token.length > 256) return false;
-  const got = Buffer.from(hashToken(token), 'hex');
-  let ok = false;
-  for (const h of validHashes) {
-    const want = Buffer.from(h, 'hex');
-    if (want.length === got.length && timingSafeEqual(want, got)) ok = true;
-  }
-  return ok;
+/** 256 random bits, URL-safe; used for device tokens and invite codes. */
+export function newSecret(): string {
+  return randomBytes(32).toString('base64url');
 }
 
-export function parseHashList(raw: string): string[] {
-  return raw
-    .split(/[\s,]+/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => /^[0-9a-f]{64}$/.test(s));
+export function newUserId(): string {
+  return randomBytes(9).toString('base64url');
+}
+
+/** Rejects junk before it costs a database read. */
+export function plausibleSecret(s: unknown): s is string {
+  return typeof s === 'string' && s.length >= 16 && s.length <= 256 && /^[A-Za-z0-9_-]+$/.test(s);
 }
