@@ -1,0 +1,84 @@
+name: pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: 1.13.3
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: terraform fmt + validate
+        working-directory: infra
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    needs: check
+    # Only main can assume the AWS role (the OIDC trust is pinned to refs/heads/main), and
+    # the job is skipped rather than failed until the bootstrap variables exist.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: pullups-deploy-${{ github.run_id }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - run: scripts/tf-init.sh
+      - name: terraform apply
+        run: terraform -chdir=infra apply -auto-approve -input=false -var "region=$AWS_REGION"
+      - run: scripts/publish-site.sh
+      - name: summary
+        run: |
+          url=$(terraform -chdir=infra output -raw app_url)
+          echo "Deployed to $url" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$(aws ssm get-parameter --name "$(terraform -chdir=infra output -raw token_param_name)" --query Parameter.Value --output text)" = "unset" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "No API token exists yet. Run \`scripts/token.sh new\` from AWS CloudShell." >> "$GITHUB_STEP_SUMMARY"
+          fi

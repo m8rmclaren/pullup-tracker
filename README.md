@@ -27,28 +27,76 @@ trends live one tab over.
 
 ## Deploy
 
-Prerequisites: Node 22+, Terraform ≥ 1.6, the AWS CLI logged in to the target account.
+Deploys run from GitHub Actions (`.github/workflows/pipeline.yml`). Every push and PR runs
+typecheck, tests, the build, and `terraform validate`. Every push to `main` then runs
+`terraform apply`, uploads the site and invalidates CloudFront. No AWS keys are stored in
+GitHub. The workflow assumes an IAM role through GitHub's OIDC token, and that role trusts
+only `main` of this repo.
+
+### One-time setup (about 5 minutes)
+
+**1. Bootstrap AWS.** This creates the OIDC trust, the deploy role and the Terraform state
+bucket from `infra/bootstrap.yaml`. Do it in **AWS CloudShell**, in the region you want
+the app in:
 
 ```sh
-cp infra/terraform.tfvars.example infra/terraform.tfvars   # optional: region, custom domain
-scripts/deploy.sh                                          # test, build, terraform apply, upload, invalidate
-scripts/token.sh new                                       # prints your token once
+# Upload infra/bootstrap.yaml via CloudShell's Actions → Upload file, then:
+aws cloudformation deploy --stack-name pullups-bootstrap \
+  --template-file bootstrap.yaml --capabilities CAPABILITY_NAMED_IAM
+aws cloudformation describe-stacks --stack-name pullups-bootstrap \
+  --query 'Stacks[0].Outputs' --output table
 ```
 
-Open the printed URL on your phone, tap **Set up sync**, paste the token, then
-**Share → Add to Home Screen** (iOS) or **Install app** (Android/Chrome). Repeat the
-token paste on each device; you can use the same token everywhere or one per device.
+(Or use the console: CloudFormation → Create stack → Upload `infra/bootstrap.yaml`, and
+tick the IAM acknowledgement.) If the account already has a GitHub OIDC provider, add
+`--parameter-overrides CreateOidcProvider=false`. If you rename the repo, also pass
+`GitHubOwner=… GitHubRepo=…`.
 
-Subsequent deploys: `scripts/deploy.sh` again, or `scripts/deploy.sh --site` to skip
-Terraform when only the frontend changed. Installed apps pick up a new version on their
-next launch after the deploy.
+**2. Add three repository variables.** In the repo, go to Settings → Secrets and variables
+→ Actions → **Variables**. These are not secrets; none of them grants access by itself.
 
-Terraform state is local (`infra/terraform.tfstate`, gitignored). That's fine for a
-one-person project; keep a copy somewhere safe or add an S3 backend block if you prefer.
+| Variable | Value (from the stack outputs) |
+|---|---|
+| `AWS_ROLE_ARN` | `AwsRoleArn` |
+| `AWS_REGION` | `AwsRegion` |
+| `TF_STATE_BUCKET` | `TfStateBucket` |
 
-**Custom domain** (optional): request an ACM certificate for it in **us-east-1**, set
-`domain_name` and `acm_certificate_arn` in `terraform.tfvars`, deploy, then point a
-CNAME/alias at the distribution.
+**3. Deploy.** Actions → pipeline → **Run workflow** (or push to `main`). The run summary
+prints the app URL. Until the variables exist, the deploy job is skipped, not failed.
+
+**4. Make a token.** In CloudShell, upload `scripts/token.sh` and run `bash token.sh new`.
+Open the app URL on your phone, tap **Set up sync**, and paste the token. Then use
+**Share → Add to Home Screen** (iOS) or **Install app** (Android/Chrome). Repeat the paste
+on each device; one shared token or one per device both work.
+
+After that, merging to `main` is the deploy. Installed apps pick up a new version on their
+next launch.
+
+### What the CI role can do
+
+The deploy role (`github-deploy-pullups`) can only touch resources named `pullups-*`
+(buckets, Lambda, log group, SSM parameter) plus CloudFront, which has no useful
+resource-level scoping. It can create IAM roles only when they carry the
+`pullups-lambda-boundary` permissions boundary. The boundary caps any role it creates at
+what the API Lambda needs: read/write `months/*`, read the token parameter, and write logs.
+Without the boundary, "can create a role and a Lambda" amounts to "can become admin". The
+role's own name sits outside the `pullups-*` namespace, so it cannot edit itself.
+
+The data bucket has `prevent_destroy` in Terraform, so a bad change can't plan it away.
+
+### Deploying from a laptop instead
+
+```sh
+export AWS_REGION=us-west-2 TF_STATE_BUCKET=<TfStateBucket output>   # plus AWS credentials
+scripts/deploy.sh            # check, build, terraform apply, upload, invalidate
+scripts/deploy.sh --site     # skip terraform; just rebuild and upload the site
+```
+
+This uses the same remote state as CI, so the two never disagree.
+
+**Custom domain** (optional): request an ACM certificate for it in **us-east-1**, then
+pass `-var domain_name=… -var acm_certificate_arn=…`. In CI, add those as `-var` flags on
+the apply step. Point a CNAME/alias at the distribution.
 
 ## How auth works
 
@@ -73,6 +121,9 @@ objects). The Lambda's role can only Get/Put `months/*` in the data bucket, List
 prefix, and read the one SSM parameter.
 
 ### Rotating or revoking the token
+
+Run these from AWS CloudShell (upload `scripts/token.sh`) or anywhere else that has AWS credentials.
+They need only the AWS CLI and openssl.
 
 ```sh
 scripts/token.sh new             # add a new token; old ones keep working
@@ -249,5 +300,7 @@ src/lambda/   handler.ts → http.ts (route/auth) → sync.ts (conditional-write
 src/app/      tracker.ts (local replica + sync engine), api.ts, App/Today/Trends/sheets/charts, sw.ts
 src/dev/      local server used by `npm run dev`
 infra/        Terraform: buckets, CloudFront + OACs, Lambda + URL, SSM parameter
-scripts/      build.mjs, dev.mjs, deploy.sh, token.sh, make-icons.py
+              bootstrap.yaml: one-time CloudFormation for CI (OIDC role, state bucket, boundary)
+scripts/      build.mjs, dev.mjs, deploy.sh, tf-init.sh, publish-site.sh, token.sh, make-icons.py
+.github/      pipeline.yml: check on every push/PR, deploy on main
 ```

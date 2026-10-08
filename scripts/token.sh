@@ -8,10 +8,12 @@
 #   scripts/token.sh revoke-all     revoke every token (then run `new`)
 #
 # The Lambda caches the list for up to 60s, so changes take effect within a minute.
+# Needs only the AWS CLI and openssl (AWS CloudShell has both). Set TOKEN_PARAM if you
+# changed the Terraform `name` variable.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-param=$(terraform -chdir=infra output -raw token_param_name)
+param="${TOKEN_PARAM:-/pullups/token-hashes}"
 current() {
   local v
   v=$(aws ssm get-parameter --name "$param" --query Parameter.Value --output text)
@@ -51,7 +53,7 @@ case "${1:-}" in
     echo "all tokens revoked"
     ;;
   *)
-    sed -n '2,11p' "$0"
+    sed -n '2,13p' "$0"
     exit 1
     ;;
 esac

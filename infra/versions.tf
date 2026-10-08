@@ -1,5 +1,13 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10"
+  # bucket and region come from -backend-config (see scripts/tf-init.sh); the bucket is
+  # created by infra/bootstrap.yaml.
+  backend "s3" {
+    key          = "pullups/terraform.tfstate"
+    encrypt      = true
+    use_lockfile = true
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"

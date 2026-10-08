@@ -2,8 +2,12 @@ resource "random_id" "suffix" {
   byte_length = 4
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   suffix = random_id.suffix.hex
+  # Created by infra/bootstrap.yaml; the deploy role may only create roles that carry it.
+  lambda_boundary = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name}-lambda-boundary"
   # The SSM parameter holds SHA-256 hashes of valid tokens, never the tokens themselves.
   token_param = "/${var.name}/token-hashes"
 }
@@ -57,6 +61,9 @@ resource "aws_s3_bucket_policy" "site" {
 
 resource "aws_s3_bucket" "data" {
   bucket = "${var.name}-data-${local.suffix}"
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "data" {
@@ -131,8 +138,9 @@ data "aws_iam_policy_document" "assume_lambda" {
 }
 
 resource "aws_iam_role" "api" {
-  name               = "${var.name}-api-${local.suffix}"
-  assume_role_policy = data.aws_iam_policy_document.assume_lambda.json
+  name                 = "${var.name}-api-${local.suffix}"
+  assume_role_policy   = data.aws_iam_policy_document.assume_lambda.json
+  permissions_boundary = local.lambda_boundary
 }
 
 data "aws_iam_policy_document" "api" {
