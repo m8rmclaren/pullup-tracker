@@ -169,6 +169,26 @@ describe('Tracker', () => {
     const edited = t.update(e.id, { reps: 7 })!;
     expect(edited.updatedAt).toBeGreaterThan(e.updatedAt);
   });
+
+  it('logs, edits and clears added weight, and syncs it', async () => {
+    const { t } = makeTracker(serverTransport(store));
+    const e = t.add(5, undefined, 25);
+    expect(e.lbs).toBe(25);
+    expect(t.update(e.id, { reps: 4 })!.lbs).toBe(25);
+    await t.syncNow();
+    const fresh = makeTracker(serverTransport(store)).t;
+    await fresh.syncNow();
+    expect(fresh.get(e.id)!.lbs).toBe(25);
+    expect('lbs' in t.update(e.id, { lbs: 0 })!).toBe(false);
+    expect('lbs' in t.add(5)).toBe(false);
+  });
+
+  it('the pad weight expires at the end of the day it was chosen', () => {
+    const { t } = makeTracker(async () => ({ months: {} }));
+    t.setPadLbs(45, '2026-10-08');
+    expect(t.padLbs('2026-10-08')).toBe(45);
+    expect(t.padLbs('2026-10-09')).toBe(0);
+  });
 });
 
 describe('backoffMs', () => {

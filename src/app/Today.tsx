@@ -1,5 +1,5 @@
 import { useRef, useState } from 'preact/hooks';
-import type { Entry } from '../shared/model';
+import { type Entry, formatLbs } from '../shared/model';
 import type { Stats } from '../shared/stats';
 import { dayKey, formatClock } from '../shared/time';
 import { Ring } from './charts';
@@ -19,9 +19,10 @@ interface TodayProps {
   onEdit: (e: Entry) => void;
   onCustom: () => void;
   onSetup: () => void;
+  onWeight: () => void;
 }
 
-export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, onSetup }: TodayProps) {
+export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, onSetup, onWeight }: TodayProps) {
   const lastTap = useRef(0);
   const [pressed, setPressed] = useState<number | null>(null);
   const goal = tracker.settings.goal;
@@ -32,6 +33,7 @@ export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, 
     .sort((a, b) => b.ts - a.ts);
   const { reps } = stats.today;
   const left = goal - reps;
+  const padLbs = tracker.padLbs(today);
 
   const log = (n: number) => {
     const t = Date.now();
@@ -40,7 +42,7 @@ export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, 
     haptic(14);
     setPressed(n);
     setTimeout(() => setPressed(null), 260);
-    onLogged(tracker.add(n));
+    onLogged(tracker.add(n, Date.now(), padLbs));
   };
 
   return (
@@ -82,8 +84,9 @@ export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, 
           <ul class="set-chips">
             {sets.map((e) => (
               <li key={e.id}>
-                <button type="button" class="set-chip" onClick={() => onEdit(e)} aria-label={`${e.reps} reps at ${formatClock(e.ts)}, edit`}>
+                <button type="button" class="set-chip" onClick={() => onEdit(e)} aria-label={`${e.reps} reps${e.lbs ? ` with ${e.lbs} pounds` : ''} at ${formatClock(e.ts)}, edit`}>
                   <b>{e.reps}</b>
+                  {e.lbs ? <em class="set-chip__lbs">{formatLbs(e.lbs)}</em> : null}
                   <span>{formatClock(e.ts)}</span>
                 </button>
               </li>
@@ -94,7 +97,11 @@ export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, 
         )}
       </section>
 
-      <section class="pad" aria-label="Log a set">
+      <section class={`pad${padLbs ? ' is-weighted' : ''}`} aria-label="Log a set">
+        <button type="button" class="pad__weight" onClick={onWeight} aria-label={`Added weight: ${padLbs ? `${padLbs} pounds` : 'none'}. Change`}>
+          <span class="muted">Weight</span>
+          <b>{padLbs ? formatLbs(padLbs) : 'Bodyweight'}</b>
+        </button>
         <div class="pad__grid">
           {QUICK.map((n) => (
             <button
@@ -102,7 +109,7 @@ export function Today({ tracker, stats, now, usual, onLogged, onEdit, onCustom, 
               type="button"
               class={`pad__btn${n === usual ? ' is-usual' : ''}${pressed === n ? ' is-pressed' : ''}`}
               onClick={() => log(n)}
-              aria-label={`Log ${n} reps`}
+              aria-label={`Log ${n} reps${padLbs ? ` with ${padLbs} pounds` : ''}`}
             >
               {n}
             </button>

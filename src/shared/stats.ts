@@ -161,3 +161,24 @@ export function usualReps(entries: Iterable<Entry>, now: number): number | null 
   }
   return best;
 }
+
+export interface HeaviestSet {
+  lbs: number;
+  reps: number;
+  day: string;
+}
+
+/** Most added weight in one set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
+export function heaviestSet(entries: Iterable<Entry>, now: number): HeaviestSet | null {
+  const todayKey = dayKey(now);
+  let best: HeaviestSet | null = null;
+  for (const e of entries) {
+    if (e.deleted || !e.lbs) continue;
+    const day = dayKey(e.ts);
+    if (day > todayKey) continue;
+    if (!best || e.lbs > best.lbs || (e.lbs === best.lbs && (e.reps > best.reps || (e.reps === best.reps && day > best.day)))) {
+      best = { lbs: e.lbs, reps: e.reps, day };
+    }
+  }
+  return best;
+}

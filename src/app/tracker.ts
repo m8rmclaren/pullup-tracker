@@ -1,8 +1,12 @@
-import { type Entry, type SyncRequest, type SyncResponse, MAX_PUSH, MAX_REPS, MIN_REPS, mergeInto } from '../shared/model';
+import { type Entry, type SyncRequest, type SyncResponse, MAX_PUSH, MAX_REPS, MIN_REPS, clampLbs, mergeInto } from '../shared/model';
 
 export interface Settings {
   token: string;
   goal: number;
+  /** Added weight the quick pad logs with; 0 is bodyweight. */
+  padLbs: number;
+  /** The Denver day padLbs was chosen. It resets to bodyweight the next day, so a forgotten belt doesn't weight tomorrow's sets. */
+  padLbsDay: string;
 }
 
 export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'auth' | 'unconfigured';
@@ -43,6 +47,7 @@ interface Persisted {
 
 const STORAGE_KEY = 'pullups:v1';
 export const DEFAULT_GOAL = 35;
+const DEFAULT_SETTINGS: Settings = { token: '', goal: DEFAULT_GOAL, padLbs: 0, padLbsDay: '' };
 /** Taps within this window are batched into one request. */
 export const SYNC_DEBOUNCE_MS = 1200;
 const MAX_BACKOFF_MS = 5 * 60_000;
@@ -56,7 +61,7 @@ export class Tracker {
   private entries = new Map<string, Entry>();
   private outbox = new Set<string>();
   private etags: Record<string, string> = {};
-  settings: Settings = { token: '', goal: DEFAULT_GOAL };
+  settings: Settings = { ...DEFAULT_SETTINGS };
   lastSyncAt: number | null = null;
   status: SyncStatus = 'unconfigured';
   lastError: string | null = null;
@@ -100,13 +105,15 @@ export class Tracker {
     return this.outbox.size;
   }
 
-  add(reps: number, ts = this.now()): Entry {
+  add(reps: number, ts = this.now(), lbs = 0): Entry {
     const e: Entry = { id: this.newId(), ts, reps: clampReps(reps), updatedAt: this.now() };
+    if (clampLbs(lbs)) e.lbs = clampLbs(lbs);
     this.write(e);
     return e;
   }
 
-  update(id: string, patch: { reps?: number; ts?: number; deleted?: boolean }): Entry | undefined {
+  /** `lbs: 0` clears the added weight. */
+  update(id: string, patch: { reps?: number; ts?: number; lbs?: number; deleted?: boolean }): Entry | undefined {
     const cur = this.entries.get(id);
     if (!cur) return undefined;
     const next: Entry = {
@@ -116,9 +123,20 @@ export class Tracker {
       // Strictly increase the clock so this edit beats the version it replaces even if the device clock went backwards.
       updatedAt: Math.max(this.now(), cur.updatedAt + 1),
     };
+    const lbs = clampLbs(patch.lbs ?? cur.lbs ?? 0);
+    if (lbs) next.lbs = lbs;
     if (patch.deleted ?? cur.deleted) next.deleted = true;
     this.write(next);
     return next;
+  }
+
+  /** The pad's added weight for `day`; a choice made on an earlier day has expired. */
+  padLbs(day: string): number {
+    return this.settings.padLbsDay === day ? this.settings.padLbs : 0;
+  }
+
+  setPadLbs(lbs: number, day: string): void {
+    this.updateSettings({ padLbs: clampLbs(lbs), padLbsDay: day });
   }
 
   remove(id: string): void {
@@ -241,7 +259,7 @@ export class Tracker {
       this.entries = new Map(p.entries.map((e) => [e.id, e]));
       this.outbox = new Set(p.outbox.filter((id) => this.entries.has(id)));
       this.etags = p.etags ?? {};
-      this.settings = Object.assign({ token: '', goal: DEFAULT_GOAL }, p.settings);
+      this.settings = Object.assign({ ...DEFAULT_SETTINGS }, p.settings);
       this.lastSyncAt = p.lastSyncAt ?? null;
     } catch {
       // A corrupt blob is not worth crashing over; the server copy repopulates on next sync.

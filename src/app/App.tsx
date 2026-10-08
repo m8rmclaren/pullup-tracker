@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { Entry } from '../shared/model';
+import { type Entry, formatLbs } from '../shared/model';
 import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
 import { useNow, useTracker } from './hooks';
-import { DaySheet, EntrySheet, SettingsSheet } from './sheets';
+import { DaySheet, EntrySheet, PadWeightSheet, SettingsSheet } from './sheets';
 import { Today } from './Today';
 import type { Tracker } from './tracker';
 import { Trends } from './Trends';
@@ -13,6 +13,7 @@ type SheetState =
   | { kind: 'edit'; entry: Entry }
   | { kind: 'day'; day: string }
   | { kind: 'settings' }
+  | { kind: 'weight' }
   | null;
 
 interface Toast {
@@ -46,7 +47,7 @@ export function App({ tracker }: { tracker: Tracker }) {
   const onLogged = useCallback(
     (e: Entry) => {
       const when = dayKey(e.ts) === dayKey(Date.now()) ? '' : ` on ${formatDay(dayKey(e.ts))}`;
-      showToast(`Logged ${e.reps}${when}`, () => tracker.remove(e.id));
+      showToast(`Logged ${e.reps}${e.lbs ? ` @ ${formatLbs(e.lbs)}` : ''}${when}`, () => tracker.remove(e.id));
     },
     [tracker, showToast],
   );
@@ -84,6 +85,7 @@ export function App({ tracker }: { tracker: Tracker }) {
             onEdit={(entry) => setSheet({ kind: 'edit', entry })}
             onCustom={() => setSheet({ kind: 'add' })}
             onSetup={() => setSheet({ kind: 'settings' })}
+            onWeight={() => setSheet({ kind: 'weight' })}
           />
         ) : (
           <Trends entries={entries} stats={stats} now={now} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
@@ -121,7 +123,7 @@ export function App({ tracker }: { tracker: Tracker }) {
       </nav>
 
       {sheet?.kind === 'add' ? (
-        <EntrySheet tracker={tracker} day={sheet.day} defaultReps={usual ?? 5} now={now} onClose={close} onLogged={onLogged} />
+        <EntrySheet tracker={tracker} day={sheet.day} defaultReps={usual ?? 5} defaultLbs={tracker.padLbs(dayKey(now))} now={now} onClose={close} onLogged={onLogged} />
       ) : null}
       {sheet?.kind === 'edit' ? (
         <EntrySheet tracker={tracker} entry={tracker.get(sheet.entry.id) ?? sheet.entry} defaultReps={sheet.entry.reps} now={now} onClose={close} onDeleted={onDeleted} />
@@ -137,6 +139,7 @@ export function App({ tracker }: { tracker: Tracker }) {
         />
       ) : null}
       {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={close} /> : null}
+      {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} now={now} onClose={close} /> : null}
     </div>
   );
 }

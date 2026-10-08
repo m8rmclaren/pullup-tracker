@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type Entry, isValidEntry, mergeInto, mergeLists, pickWinner } from '../src/shared/model';
+import { type Entry, clampLbs, isValidEntry, mergeInto, mergeLists, pickWinner } from '../src/shared/model';
 
 const e = (id: string, updatedAt: number, extra: Partial<Entry> = {}): Entry => ({ id, ts: 1_000, reps: 5, updatedAt, ...extra });
 
@@ -37,6 +37,13 @@ describe('LWW merge', () => {
     expect(merged(novDoc, octDoc)[0]!.ts).toBe(Date.parse('2026-11-01T20:00:00Z'));
   });
 
+  it('carries added weight and treats a weight-only difference as a new version', () => {
+    expect(merged([e('a', 1)], [e('a', 2, { lbs: 25 })])[0]!.lbs).toBe(25);
+    expect(mergeLists([e('a', 1, { lbs: 25 })], [e('a', 1, { lbs: 25 })]).changed).toBe(false);
+    // Same tick, different weight: both orders converge.
+    expect(merged([e('a', 3, { lbs: 10 })], [e('a', 3)])).toEqual(merged([e('a', 3)], [e('a', 3, { lbs: 10 })]));
+  });
+
   it('reports whether anything changed', () => {
     expect(mergeLists([e('a', 1)], [e('a', 1)]).changed).toBe(false);
     expect(mergeLists([e('a', 2)], [e('a', 1)]).changed).toBe(false);
@@ -52,5 +59,21 @@ describe('isValidEntry', () => {
     expect(isValidEntry({ ...e('../x', 1) })).toBe(false);
     expect(isValidEntry({ ...e('a', 1), deleted: 'yes' })).toBe(false);
     expect(isValidEntry(null)).toBe(false);
+  });
+
+  it('accepts added weight in half-pound steps up to the cap', () => {
+    expect(isValidEntry(e('a', 1, { lbs: 22.5 }))).toBe(true);
+    expect(isValidEntry(e('a', 1, { lbs: 0 }))).toBe(false);
+    expect(isValidEntry(e('a', 1, { lbs: -5 }))).toBe(false);
+    expect(isValidEntry(e('a', 1, { lbs: 2.25 }))).toBe(false);
+    expect(isValidEntry(e('a', 1, { lbs: 301 }))).toBe(false);
+    expect(isValidEntry({ ...e('a', 1), lbs: '25' })).toBe(false);
+  });
+
+  it('clampLbs rounds to the step and bounds the range', () => {
+    expect(clampLbs(22.6)).toBe(22.5);
+    expect(clampLbs(-3)).toBe(0);
+    expect(clampLbs(999)).toBe(300);
+    expect(clampLbs(Number.NaN)).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type Entry, MAX_REPS, MIN_REPS, isValidEntry } from '../shared/model';
+import { type Entry, MAX_LBS, MAX_REPS, MIN_REPS, clampLbs, formatLbs, isValidEntry } from '../shared/model';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallToEpoch } from '../shared/time';
 import { haptic } from './hooks';
@@ -30,23 +30,77 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
-function Stepper({ value, onChange, min = MIN_REPS, max = MAX_REPS, label }: { value: number; onChange: (n: number) => void; min?: number; max?: number; label: string }) {
+interface StepperProps {
+  value: number;
+  onChange: (n: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  label: string;
+  format?: (n: number) => string;
+  small?: boolean;
+}
+
+function Stepper({ value, onChange, min = MIN_REPS, max = MAX_REPS, step = 1, label, format = String, small }: StepperProps) {
   const set = (n: number) => {
     haptic(6);
     onChange(Math.min(max, Math.max(min, n)));
   };
   return (
-    <div class="stepper" role="group" aria-label={label}>
-      <button type="button" class="stepper__btn" onClick={() => set(value - 1)} disabled={value <= min} aria-label="Decrease">
+    <div class={`stepper${small ? ' stepper--small' : ''}`} role="group" aria-label={label}>
+      <button type="button" class="stepper__btn" onClick={() => set(value - step)} disabled={value <= min} aria-label="Decrease">
         −
       </button>
       <output class="stepper__val" aria-live="polite">
-        {value}
+        {format(value)}
       </output>
-      <button type="button" class="stepper__btn" onClick={() => set(value + 1)} disabled={value >= max} aria-label="Increase">
+      <button type="button" class="stepper__btn" onClick={() => set(value + step)} disabled={value >= max} aria-label="Increase">
         +
       </button>
     </div>
+  );
+}
+
+const LBS_CHIPS = [0, 5, 10, 15, 20, 25, 35, 45, 55, 70, 90];
+
+/** Added weight in 2.5 lb steps, with chips for common plate/dumbbell loads. 0 is bodyweight. */
+function WeightPicker({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <div class="weight-picker">
+      <Stepper value={value} onChange={(n) => onChange(clampLbs(n))} min={0} max={MAX_LBS} step={2.5} label="Added weight in pounds" format={(n) => (n ? formatLbs(n) : 'BW')} small />
+      <div class="chips" role="group" aria-label="Common added weights">
+        {LBS_CHIPS.map((n) => (
+          <button key={n} type="button" class={`chip${n === value ? ' is-on' : ''}`} onClick={() => onChange(n)}>
+            {n ? `+${n}` : 'BW'}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Chooses the added weight the quick pad logs with, for the rest of today. */
+export function PadWeightSheet({ tracker, now, onClose }: { tracker: Tracker; now: number; onClose: () => void }) {
+  const today = dayKey(now);
+  const [lbs, setLbs] = useState(tracker.padLbs(today));
+  return (
+    <Sheet title="Added weight" onClose={onClose}>
+      <WeightPicker value={lbs} onChange={setLbs} />
+      <p class="muted small">Quick-tap sets use this weight until midnight, then go back to bodyweight.</p>
+      <div class="sheet__actions">
+        <button
+          type="button"
+          class="btn btn--primary"
+          onClick={() => {
+            haptic(15);
+            tracker.setPadLbs(lbs, today);
+            onClose();
+          }}
+        >
+          {lbs ? `Use ${formatLbs(lbs)}` : 'Use bodyweight'}
+        </button>
+      </div>
+    </Sheet>
   );
 }
 
@@ -57,16 +111,19 @@ interface EntrySheetProps {
   /** For new entries: the day to log into (defaults to today). */
   day?: string;
   defaultReps: number;
+  /** For new entries: the starting added weight. */
+  defaultLbs?: number;
   now: number;
   onClose: () => void;
   onLogged?: (e: Entry) => void;
   onDeleted?: (e: Entry) => void;
 }
 
-export function EntrySheet({ tracker, entry, day, defaultReps, now, onClose, onLogged, onDeleted }: EntrySheetProps) {
+export function EntrySheet({ tracker, entry, day, defaultReps, defaultLbs = 0, now, onClose, onLogged, onDeleted }: EntrySheetProps) {
   const today = dayKey(now);
   const initialDay = entry ? dayKey(entry.ts) : (day ?? today);
   const [reps, setReps] = useState(entry?.reps ?? defaultReps);
+  const [lbs, setLbs] = useState(entry ? (entry.lbs ?? 0) : defaultLbs);
   const [date, setDate] = useState(initialDay);
   // Only an explicitly chosen time is converted; "now" keeps second precision and ordering.
   const [time, setTime] = useState(entry ? timeOfDay(entry.ts) : initialDay === today ? timeOfDay(now) : '12:00');
@@ -81,9 +138,9 @@ export function EntrySheet({ tracker, entry, day, defaultReps, now, onClose, onL
   const save = () => {
     haptic(15);
     if (entry) {
-      tracker.update(entry.id, { reps, ts: resolveTs() });
+      tracker.update(entry.id, { reps, lbs, ts: resolveTs() });
     } else {
-      onLogged?.(tracker.add(reps, resolveTs()));
+      onLogged?.(tracker.add(reps, resolveTs(), lbs));
     }
     onClose();
   };
@@ -98,6 +155,8 @@ export function EntrySheet({ tracker, entry, day, defaultReps, now, onClose, onL
           </button>
         ))}
       </div>
+      <h3 class="sheet__sub">Added weight</h3>
+      <WeightPicker value={lbs} onChange={setLbs} />
       <div class="field-row">
         <label class="field">
           <span>Day</span>
@@ -131,7 +190,7 @@ export function EntrySheet({ tracker, entry, day, defaultReps, now, onClose, onL
           </button>
         ) : null}
         <button type="button" class="btn btn--primary" onClick={save}>
-          {entry ? 'Save' : `Log ${reps}`}
+          {entry ? 'Save' : `Log ${reps}${lbs ? ` @ ${formatLbs(lbs)}` : ''}`}
         </button>
       </div>
     </Sheet>
@@ -156,7 +215,10 @@ export function DaySheet({ tracker, day, goal, onClose, onEdit, onAdd }: { track
             <li key={e.id}>
               <button type="button" class="set-row" onClick={() => onEdit(e)}>
                 <span class="set-row__time">{formatClock(e.ts)}</span>
-                <span class="set-row__reps">{e.reps}</span>
+                <span class="set-row__reps">
+                  {e.reps}
+                  {e.lbs ? <em class="set-row__lbs">{formatLbs(e.lbs)}</em> : null}
+                </span>
                 <span class="set-row__edit muted">Edit</span>
               </button>
             </li>
@@ -219,8 +281,8 @@ export function SettingsSheet({ tracker, onClose }: { tracker: Tracker; onClose:
       .all()
       .filter((e) => !e.deleted)
       .sort((a, b) => a.ts - b.ts)
-      .map((e) => `${dayKey(e.ts)},${timeOfDay(e.ts)},${e.reps},${new Date(e.ts).toISOString()}`);
-    download(`pullups-${stamp}.csv`, 'text/csv', ['day,time_denver,reps,timestamp_utc', ...rows].join('\n'));
+      .map((e) => `${dayKey(e.ts)},${timeOfDay(e.ts)},${e.reps},${e.lbs ?? 0},${new Date(e.ts).toISOString()}`);
+    download(`pullups-${stamp}.csv`, 'text/csv', ['day,time_denver,reps,added_lbs,timestamp_utc', ...rows].join('\n'));
   };
   const importJson = async (file: File) => {
     try {

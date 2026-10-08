@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Entry } from '../src/shared/model';
-import { computeStats, dailyTotals, series, trailingAverage, usualReps } from '../src/shared/stats';
+import { computeStats, dailyTotals, heaviestSet, series, trailingAverage, usualReps } from '../src/shared/stats';
 import { wallToEpoch } from '../src/shared/time';
 
 let n = 0;
@@ -96,5 +96,21 @@ describe('computeStats', () => {
   it('picks the most common recent rep count', () => {
     expect(usualReps([set('2026-10-08', '09:00', 5), set('2026-10-08', '10:00', 6), set('2026-10-07', '10:00', 6)], NOW)).toBe(6);
     expect(usualReps([], NOW)).toBeNull();
+  });
+});
+
+describe('heaviestSet', () => {
+  it('is null with only bodyweight sets', () => {
+    expect(heaviestSet([set('2026-10-08', '09:00', 8)], NOW)).toBeNull();
+  });
+
+  it('picks the most weight, then most reps, ignoring tombstones', () => {
+    const entries = [
+      set('2026-10-01', '09:00', 5, { lbs: 25 }),
+      set('2026-10-03', '09:00', 2, { lbs: 45 }),
+      set('2026-10-05', '09:00', 3, { lbs: 45 }),
+      set('2026-10-06', '09:00', 1, { lbs: 70, deleted: true }),
+    ];
+    expect(heaviestSet(entries, NOW)).toEqual({ lbs: 45, reps: 3, day: '2026-10-05' });
   });
 });

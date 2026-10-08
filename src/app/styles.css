@@ -333,6 +333,19 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.set-chip__lbs,
+.set-row__lbs {
+  font-style: normal;
+  font-weight: 650;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.set-row__lbs {
+  margin-left: 6px;
+  font-size: 14px;
+}
+
 .empty {
   margin: 4px 0 0;
   color: var(--muted);
@@ -346,6 +359,35 @@ input:focus-visible {
   bottom: calc(var(--tabbar-h) + var(--safe-b));
   padding: 10px 12px 10px;
   background: linear-gradient(to bottom, transparent, var(--bg) 14px);
+}
+
+.pad__weight {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 40px;
+  margin-bottom: 10px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.pad__weight b {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Weighted mode is loud on purpose: a forgotten belt setting would quietly mislabel sets. */
+.pad.is-weighted .pad__weight {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pad.is-weighted .pad__weight b {
+  color: var(--accent);
 }
 
 .pad__grid {
@@ -960,6 +1002,28 @@ input:focus-visible {
   grid-template-columns: 72px 1fr 72px;
   align-items: center;
   gap: 10px;
+}
+
+.stepper--small {
+  grid-template-columns: 56px 1fr 56px;
+}
+
+.stepper--small .stepper__btn {
+  height: 56px;
+  font-size: 26px;
+}
+
+.stepper--small .stepper__val {
+  font-size: 36px;
+}
+
+.sheet__sub {
+  margin: 20px 0 8px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .stepper__btn {

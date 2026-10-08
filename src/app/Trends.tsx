@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { Entry } from '../shared/model';
-import { type Stats, dailyTotals, series, trailingAverage } from '../shared/stats';
+import { type Stats, dailyTotals, heaviestSet, series, trailingAverage } from '../shared/stats';
 import { addDays, dayKey, formatDay } from '../shared/time';
 import { BarChart, Heatmap } from './charts';
 
@@ -23,6 +23,7 @@ export function Trends({ entries, stats, now, goal, onOpenDay }: TrendsProps) {
   const delta = stats.weekToDate - stats.lastWeekToDate;
   const history = series(totals, today, 30).reverse();
   const histMax = Math.max(goal, ...history.map((d) => d.reps));
+  const heaviest = heaviestSet(entries, now);
 
   return (
     <div class="trends">
@@ -38,6 +39,15 @@ export function Trends({ entries, stats, now, goal, onOpenDay }: TrendsProps) {
         <Tile label="Best day" value={stats.best ? `${stats.best.reps}` : '—'} unit="reps" note={stats.best ? formatDay(stats.best.day, { year: stats.best.day.slice(0, 4) !== today.slice(0, 4) }) : 'No sets yet'} />
         <Tile label="Avg set" value={fmt1(stats.avgSetSize30)} unit="reps" note="last 30 days" />
         <Tile label="Goal days" value={`${stats.goalDays30}`} unit="/ 30" note={`goal ${goal}`} />
+        {heaviest ? (
+          <Tile
+            label="Heaviest set"
+            value={`+${heaviest.lbs}`}
+            unit={`lb × ${heaviest.reps}`}
+            note={formatDay(heaviest.day, { year: heaviest.day.slice(0, 4) !== today.slice(0, 4) })}
+            wide
+          />
+        ) : null}
         <Tile label="Lifetime" value={stats.lifetimeReps.toLocaleString()} unit="reps" note={`${stats.lifetimeSets.toLocaleString()} sets · ${stats.activeDays} days`} wide />
       </div>
 
