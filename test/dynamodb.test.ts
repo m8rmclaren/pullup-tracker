@@ -9,25 +9,25 @@ import { redeemInvite } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
 import { PreconditionFailed } from '../src/lambda/db';
 import { DynamoDb } from '../src/lambda/dynamodb';
-import { handleSync } from '../src/lambda/sync';
+import { syncEntries } from '../src/lambda/sync';
 import type { Entry } from '../src/shared/model';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT;
-const table = `pullups-test-${Date.now()}`;
-const raw = new DynamoDBClient({ endpoint, region: 'us-west-2', credentials: { accessKeyId: 'x', secretAccessKey: 'x' } });
-const doc = DynamoDBDocumentClient.from(raw, { marshallOptions: { removeUndefinedValues: true } });
-const db = new DynamoDb(doc, table);
+const tableName = `pullups-test-${Date.now()}`;
+const client = new DynamoDBClient({ endpoint, region: 'us-west-2', credentials: { accessKeyId: 'x', secretAccessKey: 'x' } });
+const documentClient = DynamoDBDocumentClient.from(client, { marshallOptions: { removeUndefinedValues: true } });
+const db = new DynamoDb(documentClient, tableName);
 
 const OCT8 = Date.parse('2026-10-08T18:00:00Z');
-let n = 0;
-const e = (ts: number, reps = 5, extra: Partial<Entry> = {}): Entry => ({ id: `d${++n}`, ts, reps, updatedAt: 1, ...extra });
+let entryCount = 0;
+const makeEntry = (doneAt: number, reps = 5, extra: Partial<Entry> = {}): Entry => ({ id: `d${++entryCount}`, doneAt, reps, updatedAt: 1, ...extra });
 
 describe.skipIf(!endpoint)('DynamoDb', () => {
   beforeAll(async () => {
     // Mirrors aws_dynamodb_table.data in infra/main.tf.
-    await raw.send(
+    await client.send(
       new CreateTableCommand({
-        TableName: table,
+        TableName: tableName,
         BillingMode: 'PAY_PER_REQUEST',
         KeySchema: [
           { AttributeName: 'pk', KeyType: 'HASH' },
@@ -36,68 +36,68 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
         AttributeDefinitions: [
           { AttributeName: 'pk', AttributeType: 'S' },
           { AttributeName: 'sk', AttributeType: 'S' },
-          { AttributeName: 'srv', AttributeType: 'N' },
-          { AttributeName: 'ts', AttributeType: 'N' },
-          { AttributeName: 'mpk', AttributeType: 'S' },
-          { AttributeName: 'msk', AttributeType: 'S' },
+          { AttributeName: 'serverWrittenAt', AttributeType: 'N' },
+          { AttributeName: 'doneAt', AttributeType: 'N' },
+          { AttributeName: 'monthPk', AttributeType: 'S' },
+          { AttributeName: 'monthSk', AttributeType: 'S' },
         ],
         LocalSecondaryIndexes: [
-          { IndexName: 'by-srv', KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'srv', KeyType: 'RANGE' }], Projection: { ProjectionType: 'ALL' } },
-          { IndexName: 'by-ts', KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'ts', KeyType: 'RANGE' }], Projection: { ProjectionType: 'ALL' } },
+          { IndexName: 'by-server-written-at', KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'serverWrittenAt', KeyType: 'RANGE' }], Projection: { ProjectionType: 'ALL' } },
+          { IndexName: 'by-done-at', KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'doneAt', KeyType: 'RANGE' }], Projection: { ProjectionType: 'ALL' } },
         ],
         GlobalSecondaryIndexes: [
-          { IndexName: 'by-month', KeySchema: [{ AttributeName: 'mpk', KeyType: 'HASH' }, { AttributeName: 'msk', KeyType: 'RANGE' }], Projection: { ProjectionType: 'ALL' } },
+          { IndexName: 'by-month', KeySchema: [{ AttributeName: 'monthPk', KeyType: 'HASH' }, { AttributeName: 'monthSk', KeyType: 'RANGE' }], Projection: { ProjectionType: 'ALL' } },
         ],
       }),
     );
   });
   afterAll(async () => {
-    await raw.send(new DeleteTableCommand({ TableName: table }));
+    await client.send(new DeleteTableCommand({ TableName: tableName }));
   });
 
   it('enforces the entry and day preconditions', async () => {
-    const a = { ...e(OCT8), srv: 10 };
-    await db.putEntry('c1', a, null);
-    await expect(db.putEntry('c1', { ...a, srv: 11 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
-    await expect(db.putEntry('c1', { ...a, srv: 11 }, 9)).rejects.toBeInstanceOf(PreconditionFailed);
-    await db.putEntry('c1', { ...a, reps: 6, srv: 11 }, 10);
-    expect((await db.getEntries('c1', [a.id, 'missing'])).get(a.id)).toEqual({ ...a, reps: 6, srv: 11 });
+    const entry = { ...makeEntry(OCT8), serverWrittenAt: 10 };
+    await db.putEntry('c1', entry, null);
+    await expect(db.putEntry('c1', { ...entry, serverWrittenAt: 11 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
+    await expect(db.putEntry('c1', { ...entry, serverWrittenAt: 11 }, 9)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.putEntry('c1', { ...entry, reps: 6, serverWrittenAt: 11 }, 10);
+    expect((await db.getEntries('c1', [entry.id, 'missing'])).get(entry.id)).toEqual({ ...entry, reps: 6, serverWrittenAt: 11 });
 
-    await db.putDay('c1', { day: '2026-10-08', reps: 6, sets: 1, best: 6, ver: 1 }, null);
-    await expect(db.putDay('c1', { day: '2026-10-08', reps: 0, sets: 0, best: 0, ver: 2 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
-    await db.putDay('c1', { day: '2026-10-08', reps: 9, sets: 2, best: 6, ver: 2 }, 1);
-    expect(await db.getDay('c1', '2026-10-08')).toEqual({ day: '2026-10-08', reps: 9, sets: 2, best: 6, ver: 2 });
+    await db.putDayTotal('c1', { day: '2026-10-08', reps: 6, sets: 1, bestSetReps: 6, version: 1 }, null);
+    await expect(db.putDayTotal('c1', { day: '2026-10-08', reps: 0, sets: 0, bestSetReps: 0, version: 2 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.putDayTotal('c1', { day: '2026-10-08', reps: 9, sets: 2, bestSetReps: 6, version: 2 }, 1);
+    expect(await db.getDayTotal('c1', '2026-10-08')).toEqual({ day: '2026-10-08', reps: 9, sets: 2, bestSetReps: 6, version: 2 });
   });
 
   it('queries by write time and by set time, per user, across pages', async () => {
-    const many = Array.from({ length: 150 }, (_, i) => ({ ...e(OCT8 + i, 5, { lbs: 2.5 }), srv: 1000 + i }));
-    await Promise.all(many.map((x) => db.putEntry('q1', x, null)));
-    await db.putEntry('q2', { ...e(OCT8), srv: 5000 }, null);
-    expect(await db.entriesSince('q1', 1100)).toHaveLength(49);
-    expect(await db.entriesBetween('q1', OCT8 + 10, OCT8 + 20)).toHaveLength(10);
-    expect((await db.getEntries('q1', many.map((x) => x.id))).size).toBe(150);
-    expect((await db.entriesSince('q1', 0))[0]!.lbs).toBe(2.5);
+    const entries = Array.from({ length: 150 }, (_, i) => ({ ...makeEntry(OCT8 + i, 5, { addedWeightLbs: 2.5 }), serverWrittenAt: 1000 + i }));
+    await Promise.all(entries.map((entry) => db.putEntry('q1', entry, null)));
+    await db.putEntry('q2', { ...makeEntry(OCT8), serverWrittenAt: 5000 }, null);
+    expect(await db.entriesWrittenAfter('q1', 1100)).toHaveLength(49);
+    expect(await db.entriesDoneBetween('q1', OCT8 + 10, OCT8 + 20)).toHaveLength(10);
+    expect((await db.getEntries('q1', entries.map((entry) => entry.id))).size).toBe(150);
+    expect((await db.entriesWrittenAfter('q1', 0))[0]!.addedWeightLbs).toBe(2.5);
   });
 
   it('syncs concurrently without losing sets, and day totals land in the month index', async () => {
-    const pushes = Array.from({ length: 10 }, (_, i) => [e(OCT8 + i * 1000, i + 1)]);
-    await Promise.all(pushes.map((push) => handleSync(db, 's1', push, 0)));
-    expect((await handleSync(db, 's1', [], 0)).entries).toHaveLength(10);
-    expect(await db.getDay('s1', '2026-10-08')).toMatchObject({ reps: 55, sets: 10, best: 10 });
+    const pushes = Array.from({ length: 10 }, (_, i) => [makeEntry(OCT8 + i * 1000, i + 1)]);
+    await Promise.all(pushes.map((pushedEntries) => syncEntries(db, 's1', pushedEntries, 0)));
+    expect((await syncEntries(db, 's1', [], 0)).entries).toHaveLength(10);
+    expect(await db.getDayTotal('s1', '2026-10-08')).toMatchObject({ reps: 55, sets: 10, bestSetReps: 10 });
 
-    const board = await doc.send(new QueryCommand({ TableName: table, IndexName: 'by-month', KeyConditionExpression: 'mpk = :m', ExpressionAttributeValues: { ':m': 'M#2026-10' } }));
-    expect(board.Items?.find((i) => i.uid === 's1')).toMatchObject({ day: '2026-10-08', reps: 55 });
+    const board = await documentClient.send(new QueryCommand({ TableName: tableName, IndexName: 'by-month', KeyConditionExpression: 'monthPk = :monthPk', ExpressionAttributeValues: { ':monthPk': 'M#2026-10' } }));
+    expect(board.Items?.find((item) => item.userId === 's1')).toMatchObject({ day: '2026-10-08', reps: 55 });
   });
 
   it('redeems an invite exactly once, even when raced', async () => {
     const code = 'real-invite-code-0123456789';
-    await db.putInvite(hashToken(code), { kind: 'friend', by: 'admin', expiresAt: Date.now() + 60_000 });
+    await db.putInvite(hashToken(code), { kind: 'friend', createdBy: 'admin', expiresAt: Date.now() + 60_000 });
     const raced = await Promise.all([1, 2, 3].map((i) => redeemInvite(db, code, `Racer ${i}`, { now: Date.now })));
-    const winners = raced.flatMap((r) => (r.ok ? [r] : []));
+    const winners = raced.flatMap((result) => (result.ok ? [result] : []));
     expect(winners).toHaveLength(1);
-    const w = winners[0]!;
-    expect(await db.userIdForToken(hashToken(w.token))).toBe(w.me.id);
-    expect(await db.getUser(w.me.id)).toMatchObject({ name: w.me.name });
+    const winner = winners[0]!;
+    expect(await db.userIdForToken(hashToken(winner.token))).toBe(winner.account.id);
+    expect(await db.getUser(winner.account.id)).toMatchObject({ name: winner.account.name });
     expect(await db.getInvite(hashToken(code))).toBeNull();
   });
 });

@@ -76,33 +76,33 @@ resource "aws_dynamodb_table" "data" {
     type = "S"
   }
   attribute {
-    name = "srv"
+    name = "serverWrittenAt"
     type = "N"
   }
   attribute {
-    name = "ts"
+    name = "doneAt"
     type = "N"
   }
   attribute {
-    name = "mpk"
+    name = "monthPk"
     type = "S"
   }
   attribute {
-    name = "msk"
+    name = "monthSk"
     type = "S"
   }
 
   # A user's entries by server write time: the delta-sync cursor.
   local_secondary_index {
-    name            = "by-srv"
-    range_key       = "srv"
+    name            = "by-server-written-at"
+    range_key       = "serverWrittenAt"
     projection_type = "ALL"
   }
 
   # A user's entries by when the set was done: recomputing one day's total.
   local_secondary_index {
-    name            = "by-ts"
-    range_key       = "ts"
+    name            = "by-done-at"
+    range_key       = "doneAt"
     projection_type = "ALL"
   }
 
@@ -111,18 +111,18 @@ resource "aws_dynamodb_table" "data" {
     name            = "by-month"
     projection_type = "ALL"
     key_schema {
-      attribute_name = "mpk"
+      attribute_name = "monthPk"
       key_type       = "HASH"
     }
     key_schema {
-      attribute_name = "msk"
+      attribute_name = "monthSk"
       key_type       = "RANGE"
     }
   }
 
-  # Invites carry `ttl`; expiry is also checked on redeem since TTL deletion lags.
+  # Invites carry `ttlEpochSeconds`; expiry is also checked on redeem since TTL deletion lags.
   ttl {
-    attribute_name = "ttl"
+    attribute_name = "ttlEpochSeconds"
     enabled        = true
   }
 
@@ -183,7 +183,7 @@ resource "aws_cloudwatch_log_group" "api" {
   retention_in_days = 30
 }
 
-# `timeout` must stay well under LAG_MS in src/lambda/sync.ts, or a slow write could slip
+# `timeout` must stay well under CURSOR_LAG_MS in src/lambda/sync.ts, or a slow write could slip
 # behind a sync cursor.
 resource "aws_lambda_function" "api" {
   function_name                  = "${var.name}-api"

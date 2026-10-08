@@ -159,44 +159,44 @@ top of `src/lambda/dynamodb.ts`:
 
 | pk | sk | item |
 |---|---|---|
-| `U#<uid>` | `P` | profile: name |
-| `U#<uid>` | `E#<id>` | one set, plus `srv`, the server time it was written |
-| `U#<uid>` | `D#2026-10-08` | that user's day total: reps, sets, best set |
+| `U#<userId>` | `P` | profile: name |
+| `U#<userId>` | `E#<id>` | one set, plus `serverWrittenAt`, the server time it was written |
+| `U#<userId>` | `D#2026-10-08` | that user's day total: reps, sets, best set |
 | `T#<digest>` | `T` | device token → user id |
 | `I#<digest>` | `I` | pending invite |
 
 Each set is stored as:
 
 ```json
-{ "id": "9f2c…", "ts": 1791489600000, "reps": 6, "updatedAt": 1791489600000 }
+{ "id": "9f2c…", "doneAt": 1791489600000, "reps": 6, "updatedAt": 1791489600000 }
 ```
 
-`ts` is when you did the set (it decides the day). `updatedAt` is the version clock.
+`doneAt` is when you did the set (it decides the day). `updatedAt` is the version clock.
 A deleted set stays as a tombstone with `"deleted": true` so the delete itself can sync.
 
 **No lost writes, by construction.** The entry set is a state-based CRDT: per-entry
 last-writer-wins with a deterministic tiebreak (delete beats edit on a same-millisecond tie).
 Merging is commutative, associative and idempotent, so devices converge regardless of
 order, duplicates or retries. On the server, each pushed set is merged against the stored
-version and written with a **conditional put** on that version's `srv`. `srv` strictly
+version and written with a **conditional put** on that version's `serverWrittenAt`, which strictly
 increases per set, so a concurrent writer is always detected. When one is, the Lambda
 re-reads, re-merges and retries. A test fires 12 concurrent pushes through an
 interleaving store to prove it, and the same suite runs against DynamoDB Local in CI.
 
 **Day totals for the leaderboard.** After writing, the Lambda recomputes the total for
 every Denver day a push touched, both the old and new day when a set moves. It sums that
-day's sets through the `by-ts` index and writes the result conditional on the total's
-version, so a stale recompute can't overwrite a newer one. Day totals carry `mpk` =
+day's sets through the `by-done-at` index and writes the result conditional on the total's
+version, so a stale recompute can't overwrite a newer one. Day totals carry `monthPk` =
 `M#2026-10`, which puts every user's days for a month in the `by-month` GSI, so a board
 for any period is one query. A retried push recomputes even when its sets were already
 written, which heals a request that died between the two steps.
 
-**Delta sync.** `POST /api/sync { push: Entry[], since: <cursor> }` pushes the outbox and
-returns every set of yours written after the cursor (queried via the `by-srv` index), plus
+**Delta sync.** `POST /api/sync { pushedEntries: Entry[], sinceCursor: <cursor> }` pushes the outbox and
+returns every set of yours written after the cursor (queried via the `by-server-written-at` index), plus
 a new cursor. The cursor deliberately trails the server clock by 30 s, longer than the
 Lambda timeout, so a write that was stamped but still in flight can never slip behind
 it. The cost is that a recent write is sent back once more, which the merge ignores. A
-fresh device sends `since: 0` and gets everything in one round trip.
+fresh device sends `sinceCursor: 0` and gets everything in one round trip.
 
 **Backups.** Point-in-time recovery is on, so the table can be restored to any second
 in the last 35 days.

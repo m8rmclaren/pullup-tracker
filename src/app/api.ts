@@ -3,15 +3,15 @@ import { HttpError, type Transport } from './tracker';
 
 const TIMEOUT_MS = 15_000;
 
-async function sha256Hex(s: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 async function post<T>(path: string, payload: unknown, token?: string): Promise<T> {
   const body = JSON.stringify(payload);
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), TIMEOUT_MS);
   try {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
@@ -20,26 +20,26 @@ async function post<T>(path: string, payload: unknown, token?: string): Promise<
       'x-amz-content-sha256': await sha256Hex(body),
     };
     if (token) headers['x-pullup-token'] = token;
-    const res = await fetch(path, { method: 'POST', headers, body, signal: ctrl.signal, cache: 'no-store' });
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
+    const response = await fetch(path, { method: 'POST', headers, body, signal: abortController.signal, cache: 'no-store' });
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
       try {
-        msg = ((await res.json()) as { error?: string }).error ?? msg;
+        message = ((await response.json()) as { error?: string }).error ?? message;
       } catch {}
-      throw new HttpError(res.status, msg);
+      throw new HttpError(response.status, message);
     }
-    return (await res.json()) as T;
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') throw new Error('Request timed out');
-    throw err;
+    return (await response.json()) as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('Request timed out');
+    throw error;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timeout);
   }
 }
 
-export const fetchTransport: Transport = (req: SyncRequest, token: string) => post<SyncResponse>('/api/sync', req, token);
+export const fetchTransport: Transport = (request: SyncRequest, token: string) => post<SyncResponse>('/api/sync', request, token);
 
-export const join = (req: JoinRequest) => post<JoinResponse>('/api/join', req);
+export const join = (request: JoinRequest) => post<JoinResponse>('/api/join', request);
 
 export const createInvite = (kind: InviteKind, token: string) => post<InviteResponse>('/api/invite', { kind }, token);
 
@@ -48,6 +48,6 @@ export const inviteLink = (kind: InviteKind, code: string) => `${location.origin
 
 /** Reads an invite out of a link (or a bare fragment); null if it isn't one. */
 export function parseInviteLink(text: string): { kind: InviteKind; code: string } | null {
-  const m = /#(join|device)=([A-Za-z0-9_-]{16,256})\s*$/.exec(text.trim());
-  return m ? { kind: m[1] === 'join' ? 'friend' : 'device', code: m[2]! } : null;
+  const match = /#(join|device)=([A-Za-z0-9_-]{16,256})\s*$/.exec(text.trim());
+  return match ? { kind: match[1] === 'join' ? 'friend' : 'device', code: match[2]! } : null;
 }

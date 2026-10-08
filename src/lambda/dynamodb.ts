@@ -1,134 +1,138 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, type BatchGetCommandOutput, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { type Db, type DayTotal, type Invite, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type Db, type StoredDayTotal, type Invite, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
-//   U#<uid>   P           profile: id, name, createdAt
-//   U#<uid>   E#<id>      entry: Entry fields + srv           (LSIs `by-srv` and `by-ts` index these)
-//   U#<uid>   D#<day>     day total: day, reps, sets, best, ver, uid; mpk/msk feed GSI `by-month`
-//   T#<hash>  T           device token: uid, createdAt
-//   I#<hash>  I           invite: kind, uid?, by, expiresAt, ttl (epoch s, for DynamoDB TTL)
-// Only entries carry `srv` and `ts`, and only day totals carry `mpk`, so every index is sparse.
+//   U#<userId>  P           profile: id, name, createdAt
+//   U#<userId>  E#<id>      entry: Entry fields + serverWrittenAt   (LSIs `by-server-written-at` and `by-done-at` index these)
+//   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, version, userId; monthPk/monthSk feed GSI `by-month`
+//   T#<hash>    T           device token: userId, createdAt
+//   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
+// Only entries carry `serverWrittenAt` and `doneAt`, and only day totals carry `monthPk`, so every index is sparse.
 
-const userPk = (uid: string) => `U#${uid}`;
-const ENTRY = 'E#';
-const DAY = 'D#';
+const userPartitionKey = (userId: string) => `U#${userId}`;
+const ENTRY_SK_PREFIX = 'E#';
+const DAY_SK_PREFIX = 'D#';
 const MAX_BATCH_GET = 100;
 
-function toEntry(item: Record<string, unknown>): StoredEntry {
-  const e: StoredEntry = { id: item.id as string, ts: item.ts as number, reps: item.reps as number, updatedAt: item.updatedAt as number, srv: item.srv as number };
-  if (item.lbs) e.lbs = item.lbs as number;
-  if (item.deleted) e.deleted = true;
-  return e;
+function itemToEntry(item: Record<string, unknown>): StoredEntry {
+  const entry: StoredEntry = { id: item.id as string, doneAt: item.doneAt as number, reps: item.reps as number, updatedAt: item.updatedAt as number, serverWrittenAt: item.serverWrittenAt as number };
+  if (item.addedWeightLbs) entry.addedWeightLbs = item.addedWeightLbs as number;
+  if (item.deleted) entry.deleted = true;
+  return entry;
 }
 
-function toDay(item: Record<string, unknown>): DayTotal {
-  return { day: item.day as string, reps: item.reps as number, sets: item.sets as number, best: item.best as number, ver: item.ver as number };
+function itemToDayTotal(item: Record<string, unknown>): StoredDayTotal {
+  return { day: item.day as string, reps: item.reps as number, sets: item.sets as number, bestSetReps: item.bestSetReps as number, version: item.version as number };
 }
 
 /** Maps a lost condition (single put or transaction) to PreconditionFailed. */
-async function conditional<T>(p: Promise<T>): Promise<T> {
+async function mapConditionFailure<T>(write: Promise<T>): Promise<T> {
   try {
-    return await p;
-  } catch (err) {
-    if (err instanceof ConditionalCheckFailedException) throw new PreconditionFailed();
-    if (err instanceof TransactionCanceledException && err.CancellationReasons?.some((r) => r.Code === 'ConditionalCheckFailed')) throw new PreconditionFailed();
-    throw err;
+    return await write;
+  } catch (error) {
+    if (error instanceof ConditionalCheckFailedException) throw new PreconditionFailed();
+    if (error instanceof TransactionCanceledException && error.CancellationReasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) throw new PreconditionFailed();
+    throw error;
   }
 }
 
-/** `attr` must be absent (prev null) or still hold `prev`. */
-function versionCondition(attr: string, prev: number | null) {
-  return prev === null
+/** `attributeName` must be absent (expectedValue null) or still hold `expectedValue`. */
+function versionCondition(attributeName: string, expectedValue: number | null) {
+  return expectedValue === null
     ? { ConditionExpression: 'attribute_not_exists(pk)' }
-    : { ConditionExpression: '#v = :prev', ExpressionAttributeNames: { '#v': attr }, ExpressionAttributeValues: { ':prev': prev } };
+    : { ConditionExpression: '#version = :expected', ExpressionAttributeNames: { '#version': attributeName }, ExpressionAttributeValues: { ':expected': expectedValue } };
 }
 
 export class DynamoDb implements Db {
   constructor(
-    private doc: DynamoDBDocumentClient,
-    private table: string,
+    private documentClient: DynamoDBDocumentClient,
+    private tableName: string,
   ) {}
 
-  async getEntries(uid: string, ids: string[]) {
-    const out = new Map<string, StoredEntry>();
+  async getEntries(userId: string, ids: string[]) {
+    const entriesById = new Map<string, StoredEntry>();
     for (let i = 0; i < ids.length; i += MAX_BATCH_GET) {
-      let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + MAX_BATCH_GET).map((id) => ({ pk: userPk(uid), sk: ENTRY + id }));
+      let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + MAX_BATCH_GET).map((id) => ({ pk: userPartitionKey(userId), sk: ENTRY_SK_PREFIX + id }));
       for (let attempt = 0; keys?.length; attempt++) {
-        if (attempt > 0) await new Promise((r) => setTimeout(r, Math.min(1000, 25 * 2 ** attempt)));
-        const res: BatchGetCommandOutput = await this.doc.send(new BatchGetCommand({ RequestItems: { [this.table]: { Keys: keys, ConsistentRead: true } } }));
-        for (const item of res.Responses?.[this.table] ?? []) out.set(item.id as string, toEntry(item));
-        keys = res.UnprocessedKeys?.[this.table]?.Keys;
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(1000, 25 * 2 ** attempt)));
+        const response: BatchGetCommandOutput = await this.documentClient.send(new BatchGetCommand({ RequestItems: { [this.tableName]: { Keys: keys, ConsistentRead: true } } }));
+        for (const item of response.Responses?.[this.tableName] ?? []) entriesById.set(item.id as string, itemToEntry(item));
+        keys = response.UnprocessedKeys?.[this.tableName]?.Keys;
       }
     }
-    return out;
+    return entriesById;
   }
 
-  async putEntry(uid: string, e: StoredEntry, prevSrv: number | null) {
-    await conditional(this.doc.send(new PutCommand({ TableName: this.table, Item: { pk: userPk(uid), sk: ENTRY + e.id, ...e }, ...versionCondition('srv', prevSrv) })));
+  async putEntry(userId: string, entry: StoredEntry, expectedServerWrittenAt: number | null) {
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: ENTRY_SK_PREFIX + entry.id, ...entry }, ...versionCondition('serverWrittenAt', expectedServerWrittenAt) })));
   }
 
-  async entriesSince(uid: string, srv: number) {
-    return this.queryEntries({ IndexName: 'by-srv', KeyConditionExpression: 'pk = :pk AND srv > :s', ExpressionAttributeValues: { ':pk': userPk(uid), ':s': srv } });
-  }
-
-  async entriesBetween(uid: string, from: number, to: number) {
+  async entriesWrittenAfter(userId: string, serverWrittenAt: number) {
     return this.queryEntries({
-      IndexName: 'by-ts',
-      KeyConditionExpression: 'pk = :pk AND ts BETWEEN :a AND :b',
-      ExpressionAttributeValues: { ':pk': userPk(uid), ':a': from, ':b': to - 1 },
+      IndexName: 'by-server-written-at',
+      KeyConditionExpression: 'pk = :pk AND serverWrittenAt > :serverWrittenAt',
+      ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':serverWrittenAt': serverWrittenAt },
+    });
+  }
+
+  async entriesDoneBetween(userId: string, fromMs: number, toMs: number) {
+    return this.queryEntries({
+      IndexName: 'by-done-at',
+      KeyConditionExpression: 'pk = :pk AND doneAt BETWEEN :fromMs AND :lastMs',
+      ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':fromMs': fromMs, ':lastMs': toMs - 1 },
     });
   }
 
   private async queryEntries(input: Omit<QueryCommandInput, 'TableName'>): Promise<StoredEntry[]> {
-    const out: StoredEntry[] = [];
-    let start: Record<string, unknown> | undefined;
+    const entries: StoredEntry[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
     do {
-      const res: QueryCommandOutput = await this.doc.send(new QueryCommand({ TableName: this.table, ConsistentRead: true, ExclusiveStartKey: start, ...input }));
-      for (const item of res.Items ?? []) out.push(toEntry(item));
-      start = res.LastEvaluatedKey;
-    } while (start);
-    return out;
+      const response: QueryCommandOutput = await this.documentClient.send(new QueryCommand({ TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey: exclusiveStartKey, ...input }));
+      for (const item of response.Items ?? []) entries.push(itemToEntry(item));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return entries;
   }
 
-  async getDay(uid: string, day: string) {
-    const res = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: userPk(uid), sk: DAY + day }, ConsistentRead: true }));
-    return res.Item ? toDay(res.Item) : null;
+  async getDayTotal(userId: string, day: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: DAY_SK_PREFIX + day }, ConsistentRead: true }));
+    return response.Item ? itemToDayTotal(response.Item) : null;
   }
 
-  async putDay(uid: string, d: DayTotal, prevVer: number | null) {
-    const Item = { pk: userPk(uid), sk: DAY + d.day, uid, ...d, mpk: `M#${d.day.slice(0, 7)}`, msk: `${d.day}#${uid}` };
-    await conditional(this.doc.send(new PutCommand({ TableName: this.table, Item, ...versionCondition('ver', prevVer) })));
+  async putDayTotal(userId: string, dayTotal: StoredDayTotal, expectedVersion: number | null) {
+    const Item = { pk: userPartitionKey(userId), sk: DAY_SK_PREFIX + dayTotal.day, userId, ...dayTotal, monthPk: `M#${dayTotal.day.slice(0, 7)}`, monthSk: `${dayTotal.day}#${userId}` };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
   }
 
-  async getUser(uid: string) {
-    const res = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: userPk(uid), sk: 'P' }, ConsistentRead: true }));
-    return res.Item ? { id: res.Item.id as string, name: res.Item.name as string, createdAt: res.Item.createdAt as number } : null;
+  async getUser(userId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'P' }, ConsistentRead: true }));
+    return response.Item ? { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number } : null;
   }
 
   async userIdForToken(tokenHash: string) {
-    const res = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: `T#${tokenHash}`, sk: 'T' }, ConsistentRead: true }));
-    return (res.Item?.uid as string | undefined) ?? null;
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: `T#${tokenHash}`, sk: 'T' }, ConsistentRead: true }));
+    return (response.Item?.userId as string | undefined) ?? null;
   }
 
-  async putInvite(codeHash: string, inv: Invite) {
-    await this.doc.send(new PutCommand({ TableName: this.table, Item: { pk: `I#${codeHash}`, sk: 'I', ...inv, ttl: Math.ceil(inv.expiresAt / 1000) } }));
+  async putInvite(codeHash: string, invite: Invite) {
+    await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: `I#${codeHash}`, sk: 'I', ...invite, ttlEpochSeconds: Math.ceil(invite.expiresAt / 1000) } }));
   }
 
   async getInvite(codeHash: string) {
-    const res = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: `I#${codeHash}`, sk: 'I' }, ConsistentRead: true }));
-    if (!res.Item) return null;
-    const inv: Invite = { kind: res.Item.kind as Invite['kind'], by: res.Item.by as string, expiresAt: res.Item.expiresAt as number };
-    if (res.Item.uid) inv.uid = res.Item.uid as string;
-    return inv;
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: `I#${codeHash}`, sk: 'I' }, ConsistentRead: true }));
+    if (!response.Item) return null;
+    const invite: Invite = { kind: response.Item.kind as Invite['kind'], createdBy: response.Item.createdBy as string, expiresAt: response.Item.expiresAt as number };
+    if (response.Item.userId) invite.userId = response.Item.userId as string;
+    return invite;
   }
 
-  async redeemInvite(codeHash: string, tokenHash: string, uid: string, newUser: User | null) {
-    const items: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [
-      { Delete: { TableName: this.table, Key: { pk: `I#${codeHash}`, sk: 'I' }, ConditionExpression: 'attribute_exists(pk)' } },
-      { Put: { TableName: this.table, Item: { pk: `T#${tokenHash}`, sk: 'T', uid, createdAt: Date.now() }, ConditionExpression: 'attribute_not_exists(pk)' } },
+  async redeemInvite(codeHash: string, tokenHash: string, userId: string, newUser: User | null) {
+    const transactItems: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [
+      { Delete: { TableName: this.tableName, Key: { pk: `I#${codeHash}`, sk: 'I' }, ConditionExpression: 'attribute_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: { pk: `T#${tokenHash}`, sk: 'T', userId, createdAt: Date.now() }, ConditionExpression: 'attribute_not_exists(pk)' } },
     ];
-    if (newUser) items.push({ Put: { TableName: this.table, Item: { pk: userPk(newUser.id), sk: 'P', ...newUser }, ConditionExpression: 'attribute_not_exists(pk)' } });
-    await conditional(this.doc.send(new TransactWriteCommand({ TransactItems: items })));
+    if (newUser) transactItems.push({ Put: { TableName: this.tableName, Item: { pk: userPartitionKey(newUser.id), sk: 'P', ...newUser }, ConditionExpression: 'attribute_not_exists(pk)' } });
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
   }
 }

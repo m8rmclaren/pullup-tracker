@@ -2,12 +2,12 @@
 // Day keys are 'YYYY-MM-DD' strings; arithmetic on them is pure calendar math in
 // UTC so DST never shifts a day.
 
-export const TZ = 'America/Denver';
+export const TIME_ZONE = 'America/Denver';
 
 const DAY_MS = 86_400_000;
 
-const partsFmt = new Intl.DateTimeFormat('en-US', {
-  timeZone: TZ,
+const wallClockFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: TIME_ZONE,
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
@@ -17,46 +17,46 @@ const partsFmt = new Intl.DateTimeFormat('en-US', {
   hourCycle: 'h23',
 });
 
-interface WallParts {
-  y: number;
-  mo: number;
-  d: number;
-  h: number;
-  mi: number;
-  s: number;
+interface WallClock {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
 }
 
-function wallParts(ts: number): WallParts {
-  const out: Record<string, number> = {};
-  for (const p of partsFmt.formatToParts(ts)) {
-    if (p.type !== 'literal') out[p.type] = Number(p.value);
+function denverWallClock(epochMs: number): WallClock {
+  const valuesByType: Record<string, number> = {};
+  for (const part of wallClockFormatter.formatToParts(epochMs)) {
+    if (part.type !== 'literal') valuesByType[part.type] = Number(part.value);
   }
   return {
-    y: out.year!,
-    mo: out.month!,
-    d: out.day!,
-    h: out.hour! % 24,
-    mi: out.minute!,
-    s: out.second!,
+    year: valuesByType.year!,
+    month: valuesByType.month!,
+    day: valuesByType.day!,
+    hour: valuesByType.hour! % 24,
+    minute: valuesByType.minute!,
+    second: valuesByType.second!,
   };
 }
 
-const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+const pad = (value: number, width = 2) => String(value).padStart(width, '0');
 
-export function dayKey(ts: number): string {
-  const p = wallParts(ts);
-  return `${pad(p.y, 4)}-${pad(p.mo)}-${pad(p.d)}`;
+export function dayKey(epochMs: number): string {
+  const wallClock = denverWallClock(epochMs);
+  return `${pad(wallClock.year, 4)}-${pad(wallClock.month)}-${pad(wallClock.day)}`;
 }
 
-export function monthKey(ts: number): string {
-  return dayKey(ts).slice(0, 7);
+export function monthKey(epochMs: number): string {
+  return dayKey(epochMs).slice(0, 7);
 }
 
 /** Denver wall-clock time minus UTC, in ms (e.g. -6h in summer, -7h in winter). */
-export function tzOffsetMs(ts: number): number {
-  const p = wallParts(ts);
-  const asUtc = Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi, p.s);
-  return asUtc - Math.floor(ts / 1000) * 1000;
+export function denverOffsetMs(epochMs: number): number {
+  const wallClock = denverWallClock(epochMs);
+  const asUtc = Date.UTC(wallClock.year, wallClock.month - 1, wallClock.day, wallClock.hour, wallClock.minute, wallClock.second);
+  return asUtc - Math.floor(epochMs / 1000) * 1000;
 }
 
 /**
@@ -64,71 +64,71 @@ export function tzOffsetMs(ts: number): number {
  * an hour later (2:30 → 3:30), as clocks do; an ambiguous fall-back time resolves to the
  * first (daylight) occurrence.
  */
-export function wallToEpoch(day: string, hhmm: string): number {
-  const [y, mo, d] = day.split('-').map(Number) as [number, number, number];
-  const [h, mi] = hhmm.split(':').map(Number) as [number, number];
-  const naive = Date.UTC(y, mo - 1, d, h, mi);
-  const first = naive - tzOffsetMs(naive - 12 * 3_600_000);
-  const second = naive - tzOffsetMs(naive + 12 * 3_600_000);
-  for (const candidate of [first, second].sort((a, b) => a - b)) {
-    const p = wallParts(candidate);
-    if (p.h === h && p.mi === mi && dayKey(candidate) === day) return candidate;
+export function wallClockToEpochMs(day: string, hhmm: string): number {
+  const [year, month, dayOfMonth] = day.split('-').map(Number) as [number, number, number];
+  const [hour, minute] = hhmm.split(':').map(Number) as [number, number];
+  const naiveUtcMs = Date.UTC(year, month - 1, dayOfMonth, hour, minute);
+  const viaEarlierOffset = naiveUtcMs - denverOffsetMs(naiveUtcMs - 12 * 3_600_000);
+  const viaLaterOffset = naiveUtcMs - denverOffsetMs(naiveUtcMs + 12 * 3_600_000);
+  for (const candidate of [viaEarlierOffset, viaLaterOffset].sort((a, b) => a - b)) {
+    const wallClock = denverWallClock(candidate);
+    if (wallClock.hour === hour && wallClock.minute === minute && dayKey(candidate) === day) return candidate;
   }
-  return Math.max(first, second);
+  return Math.max(viaEarlierOffset, viaLaterOffset);
 }
 
-export function timeOfDay(ts: number): string {
-  const p = wallParts(ts);
-  return `${pad(p.h)}:${pad(p.mi)}`;
+export function timeOfDay(epochMs: number): string {
+  const wallClock = denverWallClock(epochMs);
+  return `${pad(wallClock.hour)}:${pad(wallClock.minute)}`;
 }
 
-function dayToUtc(day: string): number {
-  const [y, mo, d] = day.split('-').map(Number) as [number, number, number];
-  return Date.UTC(y, mo - 1, d);
+function dayKeyToUtcMs(day: string): number {
+  const [year, month, dayOfMonth] = day.split('-').map(Number) as [number, number, number];
+  return Date.UTC(year, month - 1, dayOfMonth);
 }
 
-function utcToDay(ms: number): string {
-  const dt = new Date(ms);
-  return `${pad(dt.getUTCFullYear(), 4)}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+function utcMsToDayKey(utcMs: number): string {
+  const date = new Date(utcMs);
+  return `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 }
 
-export function addDays(day: string, n: number): string {
-  return utcToDay(dayToUtc(day) + n * DAY_MS);
+export function addDays(day: string, days: number): string {
+  return utcMsToDayKey(dayKeyToUtcMs(day) + days * DAY_MS);
 }
 
-/** Whole days from a to b (b - a). */
-export function dayDiff(a: string, b: string): number {
-  return Math.round((dayToUtc(b) - dayToUtc(a)) / DAY_MS);
+/** Whole days from `fromDay` to `toDay` (toDay - fromDay). */
+export function daysBetween(fromDay: string, toDay: string): number {
+  return Math.round((dayKeyToUtcMs(toDay) - dayKeyToUtcMs(fromDay)) / DAY_MS);
 }
 
 /** 0 = Monday … 6 = Sunday. */
-export function weekdayMon0(day: string): number {
-  return (new Date(dayToUtc(day)).getUTCDay() + 6) % 7;
+export function weekdayIndexFromMonday(day: string): number {
+  return (new Date(dayKeyToUtcMs(day)).getUTCDay() + 6) % 7;
 }
 
 export function startOfWeek(day: string): string {
-  return addDays(day, -weekdayMon0(day));
+  return addDays(day, -weekdayIndexFromMonday(day));
 }
 
-/** Ms until the next Denver midnight after `ts`. */
-export function msUntilNextDay(ts: number): number {
-  const next = wallToEpoch(addDays(dayKey(ts), 1), '00:00');
-  return Math.max(1000, next - ts);
+/** Ms until the next Denver midnight after `epochMs`. */
+export function msUntilNextDay(epochMs: number): number {
+  const nextMidnightMs = wallClockToEpochMs(addDays(dayKey(epochMs), 1), '00:00');
+  return Math.max(1000, nextMidnightMs - epochMs);
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-export function formatDay(day: string, opts: { weekday?: boolean; year?: boolean } = {}): string {
-  const [y, mo, d] = day.split('-').map(Number) as [number, number, number];
-  let s = `${MONTHS[mo - 1]} ${d}`;
-  if (opts.weekday) s = `${WEEKDAYS[weekdayMon0(day)]}, ${s}`;
-  if (opts.year) s += `, ${y}`;
-  return s;
+export function formatDay(day: string, options: { weekday?: boolean; year?: boolean } = {}): string {
+  const [year, month, dayOfMonth] = day.split('-').map(Number) as [number, number, number];
+  let label = `${MONTHS[month - 1]} ${dayOfMonth}`;
+  if (options.weekday) label = `${WEEKDAYS[weekdayIndexFromMonday(day)]}, ${label}`;
+  if (options.year) label += `, ${year}`;
+  return label;
 }
 
-export function formatClock(ts: number): string {
-  const p = wallParts(ts);
-  const h12 = p.h % 12 === 0 ? 12 : p.h % 12;
-  return `${h12}:${pad(p.mi)}${p.h < 12 ? 'a' : 'p'}`;
+export function formatClock(epochMs: number): string {
+  const wallClock = denverWallClock(epochMs);
+  const hour12 = wallClock.hour % 12 === 0 ? 12 : wallClock.hour % 12;
+  return `${hour12}:${pad(wallClock.minute)}${wallClock.hour < 12 ? 'a' : 'p'}`;
 }

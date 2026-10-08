@@ -15,6 +15,6 @@ export function newUserId(): string {
 }
 
 /** Rejects junk before it costs a database read. */
-export function plausibleSecret(s: unknown): s is string {
-  return typeof s === 'string' && s.length >= 16 && s.length <= 256 && /^[A-Za-z0-9_-]+$/.test(s);
+export function isPlausibleSecret(secret: unknown): secret is string {
+  return typeof secret === 'string' && secret.length >= 16 && secret.length <= 256 && /^[A-Za-z0-9_-]+$/.test(secret);
 }

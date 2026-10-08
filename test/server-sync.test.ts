@@ -1,151 +1,151 @@
 import { describe, expect, it } from 'vitest';
 import type { Entry } from '../src/shared/model';
-import { DEVICE_LINK_MS, createInvite } from '../src/lambda/accounts';
+import { DEVICE_LINK_TTL_MS, createInvite } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
 import { type StoredEntry, MemoryDb } from '../src/lambda/db';
 import { route } from '../src/lambda/http';
-import { LAG_MS, handleSync, recomputeDay } from '../src/lambda/sync';
+import { CURSOR_LAG_MS, syncEntries, recomputeDayTotal } from '../src/lambda/sync';
 
 const OCT8 = Date.parse('2026-10-08T18:00:00Z');
 const OCT9 = Date.parse('2026-10-09T18:00:00Z');
-const U = 'u1';
-let n = 0;
-const e = (ts: number, reps = 5, extra: Partial<Entry> = {}): Entry => ({ id: `id${++n}`, ts, reps, updatedAt: 1, ...extra });
-const tick = () => new Promise((r) => setTimeout(r, 1));
+const USER_ID = 'u1';
+let entryCount = 0;
+const makeEntry = (doneAt: number, reps = 5, extra: Partial<Entry> = {}): Entry => ({ id: `id${++entryCount}`, doneAt, reps, updatedAt: 1, ...extra });
+const tick = () => new Promise((resolve) => setTimeout(resolve, 1));
 
 /** Yields around every read and write so concurrent requests interleave the worst way. */
 class InterleavingDb extends MemoryDb {
-  override async getEntries(uid: string, ids: string[]) {
+  override async getEntries(userId: string, ids: string[]) {
     await tick();
-    const v = await super.getEntries(uid, ids);
+    const entriesById = await super.getEntries(userId, ids);
     await tick();
-    return v;
+    return entriesById;
   }
-  override async entriesBetween(uid: string, from: number, to: number) {
-    const v = await super.entriesBetween(uid, from, to);
+  override async entriesDoneBetween(userId: string, fromMs: number, toMs: number) {
+    const entries = await super.entriesDoneBetween(userId, fromMs, toMs);
     await tick();
-    return v;
+    return entries;
   }
-  override async getDay(uid: string, day: string) {
-    const v = await super.getDay(uid, day);
+  override async getDayTotal(userId: string, day: string) {
+    const dayTotal = await super.getDayTotal(userId, day);
     await tick();
-    return v;
+    return dayTotal;
   }
 }
 
-describe('handleSync', () => {
+describe('syncEntries', () => {
   it('returns everything on a first sync, then only what was written since the cursor', async () => {
     const db = new MemoryDb();
-    let t = OCT8;
-    const clock = { now: () => t };
-    const a = e(OCT8);
-    const r1 = await handleSync(db, U, [a], 0, clock);
-    expect(r1.entries).toEqual([a]);
-    expect(r1.cursor).toBe(OCT8 - LAG_MS);
+    let nowMs = OCT8;
+    const clock = { now: () => nowMs };
+    const first = makeEntry(OCT8);
+    const firstSync = await syncEntries(db, USER_ID, [first], 0, clock);
+    expect(firstSync.entries).toEqual([first]);
+    expect(firstSync.cursor).toBe(OCT8 - CURSOR_LAG_MS);
 
     // Each write was younger than the lag when the cursor was cut, so it comes back once more.
-    t += 10 * 60_000;
-    const b = e(OCT8 + 1);
-    const r2 = await handleSync(db, U, [b], r1.cursor, clock);
-    expect(r2.entries).toEqual([a, b]);
+    nowMs += 10 * 60_000;
+    const second = makeEntry(OCT8 + 1);
+    const secondSync = await syncEntries(db, USER_ID, [second], firstSync.cursor, clock);
+    expect(secondSync.entries).toEqual([first, second]);
 
-    t += 10 * 60_000;
-    const r3 = await handleSync(db, U, [], r2.cursor, clock);
-    expect(r3.entries).toEqual([b]);
+    nowMs += 10 * 60_000;
+    const thirdSync = await syncEntries(db, USER_ID, [], secondSync.cursor, clock);
+    expect(thirdSync.entries).toEqual([second]);
 
-    t += 10 * 60_000;
-    expect((await handleSync(db, U, [], r3.cursor, clock)).entries).toEqual([]);
+    nowMs += 10 * 60_000;
+    expect((await syncEntries(db, USER_ID, [], thirdSync.cursor, clock)).entries).toEqual([]);
   });
 
   it('still delivers a write that commits after a later sync has started', async () => {
-    let t = OCT8;
-    const clock = { now: () => t };
+    let nowMs = OCT8;
+    const clock = { now: () => nowMs };
     let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
+    const gate = new Promise<void>((resolve) => (release = resolve));
     class SlowDb extends MemoryDb {
-      override async putEntry(uid: string, x: StoredEntry, prev: number | null) {
+      override async putEntry(userId: string, entry: StoredEntry, expectedServerWrittenAt: number | null) {
         await gate;
-        return super.putEntry(uid, x, prev);
+        return super.putEntry(userId, entry, expectedServerWrittenAt);
       }
     }
     const db = new SlowDb();
-    const slow = handleSync(db, U, [e(OCT8)], 0, clock); // stamped at t, not yet committed
+    const slow = syncEntries(db, USER_ID, [makeEntry(OCT8)], 0, clock); // stamped at nowMs, not yet committed
     await tick();
-    t += 5000;
-    const reader = await handleSync(new MemoryDb(), U, [], 0, clock); // cursor from another, faster request
+    nowMs += 5000;
+    const reader = await syncEntries(new MemoryDb(), USER_ID, [], 0, clock); // cursor from another, faster request
     release();
     await slow;
-    expect((await handleSync(db, U, [], reader.cursor, clock)).entries).toHaveLength(1);
+    expect((await syncEntries(db, USER_ID, [], reader.cursor, clock)).entries).toHaveLength(1);
   });
 
   it('keeps day totals for the leaderboard, through edits, deletes and moves between days', async () => {
     const db = new MemoryDb();
-    const a = e(OCT8, 5);
-    const b = e(OCT8, 8, { lbs: 25 });
-    await handleSync(db, U, [a, b], 0);
-    expect(await db.getDay(U, '2026-10-08')).toMatchObject({ reps: 13, sets: 2, best: 8 });
+    const first = makeEntry(OCT8, 5);
+    const second = makeEntry(OCT8, 8, { addedWeightLbs: 25 });
+    await syncEntries(db, USER_ID, [first, second], 0);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 13, sets: 2, bestSetReps: 8 });
 
-    await handleSync(db, U, [{ ...a, deleted: true, updatedAt: 2 }], 0);
-    expect(await db.getDay(U, '2026-10-08')).toMatchObject({ reps: 8, sets: 1, best: 8 });
+    await syncEntries(db, USER_ID, [{ ...first, deleted: true, updatedAt: 2 }], 0);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 8, sets: 1, bestSetReps: 8 });
 
-    await handleSync(db, U, [{ ...b, ts: OCT9, updatedAt: 2 }], 0);
-    expect(await db.getDay(U, '2026-10-08')).toMatchObject({ reps: 0, sets: 0 });
-    expect(await db.getDay(U, '2026-10-09')).toMatchObject({ reps: 8, sets: 1 });
+    await syncEntries(db, USER_ID, [{ ...second, doneAt: OCT9, updatedAt: 2 }], 0);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 0, sets: 0 });
+    expect(await db.getDayTotal(USER_ID, '2026-10-09')).toMatchObject({ reps: 8, sets: 1 });
   });
 
   it('heals a day total when a retried push finds its entry already written', async () => {
     const db = new MemoryDb();
-    const a = e(OCT8, 7);
+    const entry = makeEntry(OCT8, 7);
     // As if a request wrote the entry and then timed out before totalling the day.
-    await db.putEntry(U, { ...a, srv: 1 }, null);
-    await handleSync(db, U, [a], 0);
-    expect(await db.getDay(U, '2026-10-08')).toMatchObject({ reps: 7 });
+    await db.putEntry(USER_ID, { ...entry, serverWrittenAt: 1 }, null);
+    await syncEntries(db, USER_ID, [entry], 0);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 7 });
   });
 
   it('loses no sets, and no reps from the total, when many devices push at once', async () => {
     const db = new InterleavingDb();
-    const pushes = Array.from({ length: 12 }, (_, i) => [e(OCT8 + i * 1000, (i % 6) + 3)]);
-    await Promise.all(pushes.map((push) => handleSync(db, U, push, 0)));
-    const all = (await handleSync(db, U, [], 0)).entries;
-    expect(all).toHaveLength(12);
-    expect((await db.getDay(U, '2026-10-08'))!.reps).toBe(all.reduce((s, x) => s + x.reps, 0));
+    const pushes = Array.from({ length: 12 }, (_, i) => [makeEntry(OCT8 + i * 1000, (i % 6) + 3)]);
+    await Promise.all(pushes.map((pushedEntries) => syncEntries(db, USER_ID, pushedEntries, 0)));
+    const allEntries = (await syncEntries(db, USER_ID, [], 0)).entries;
+    expect(allEntries).toHaveLength(12);
+    expect((await db.getDayTotal(USER_ID, '2026-10-08'))!.reps).toBe(allEntries.reduce((reps, entry) => reps + entry.reps, 0));
   });
 
   it('a concurrent edit and delete converge to the newer one', async () => {
     const db = new InterleavingDb();
-    const base = e(OCT8, 5);
-    await handleSync(db, U, [base], 0);
-    await Promise.all([handleSync(db, U, [{ ...base, reps: 7, updatedAt: 10 }], 0), handleSync(db, U, [{ ...base, deleted: true, updatedAt: 11 }], 0)]);
-    expect((await handleSync(db, U, [], 0)).entries).toEqual([{ ...base, deleted: true, updatedAt: 11 }]);
-    expect(await db.getDay(U, '2026-10-08')).toMatchObject({ reps: 0, sets: 0 });
+    const base = makeEntry(OCT8, 5);
+    await syncEntries(db, USER_ID, [base], 0);
+    await Promise.all([syncEntries(db, USER_ID, [{ ...base, reps: 7, updatedAt: 10 }], 0), syncEntries(db, USER_ID, [{ ...base, deleted: true, updatedAt: 11 }], 0)]);
+    expect((await syncEntries(db, USER_ID, [], 0)).entries).toEqual([{ ...base, deleted: true, updatedAt: 11 }]);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 0, sets: 0 });
   });
 
   it('ignores a stale version and does not rewrite the entry', async () => {
     const db = new MemoryDb();
-    const a = e(OCT8, 5, { updatedAt: 10 });
-    await handleSync(db, U, [a], 0);
-    const srv = db.entries.get(U)!.get(a.id)!.srv;
-    await handleSync(db, U, [{ ...a, reps: 9, updatedAt: 3 }], 0);
-    expect(db.entries.get(U)!.get(a.id)).toMatchObject({ reps: 5, srv });
+    const entry = makeEntry(OCT8, 5, { updatedAt: 10 });
+    await syncEntries(db, USER_ID, [entry], 0);
+    const serverWrittenAt = db.entries.get(USER_ID)!.get(entry.id)!.serverWrittenAt;
+    await syncEntries(db, USER_ID, [{ ...entry, reps: 9, updatedAt: 3 }], 0);
+    expect(db.entries.get(USER_ID)!.get(entry.id)).toMatchObject({ reps: 5, serverWrittenAt });
   });
 
   it('a stale recompute cannot overwrite a newer total', async () => {
     const db = new InterleavingDb();
-    await handleSync(db, U, [e(OCT8, 5)], 0);
-    await Promise.all([recomputeDay(db, U, '2026-10-08'), handleSync(db, U, [e(OCT8, 6)], 0), recomputeDay(db, U, '2026-10-08')]);
-    expect((await db.getDay(U, '2026-10-08'))!.reps).toBe(11);
+    await syncEntries(db, USER_ID, [makeEntry(OCT8, 5)], 0);
+    await Promise.all([recomputeDayTotal(db, USER_ID, '2026-10-08'), syncEntries(db, USER_ID, [makeEntry(OCT8, 6)], 0), recomputeDayTotal(db, USER_ID, '2026-10-08')]);
+    expect((await db.getDayTotal(USER_ID, '2026-10-08'))!.reps).toBe(11);
   });
 });
 
 describe('route', () => {
-  const T1 = 'device-token-for-user-one-0123456789';
-  const T2 = 'device-token-for-user-two-0123456789';
+  const USER_ONE_TOKEN = 'device-token-for-user-one-0123456789';
+  const USER_TWO_TOKEN = 'device-token-for-user-two-0123456789';
   const setup = () => {
     const db = new MemoryDb();
     db.users.set('u1', { id: 'u1', name: 'One', createdAt: 1 });
     db.users.set('u2', { id: 'u2', name: 'Two', createdAt: 1 });
-    db.tokens.set(hashToken(T1), 'u1');
-    db.tokens.set(hashToken(T2), 'u2');
+    db.tokens.set(hashToken(USER_ONE_TOKEN), 'u1');
+    db.tokens.set(hashToken(USER_TWO_TOKEN), 'u2');
     return db;
   };
   const post = (db: MemoryDb, path: string, body: unknown, token?: string, now = Date.now) =>
@@ -153,58 +153,58 @@ describe('route', () => {
 
   it('syncs per account, and one user never sees another user’s sets', async () => {
     const db = setup();
-    const mine = e(OCT8, 9);
-    const r1 = await post(db, '/api/sync', { push: [mine], since: 0 }, T1);
-    expect(r1).toMatchObject({ status: 200, body: { entries: [mine], me: { id: 'u1', name: 'One' } } });
-    const r2 = await post(db, '/api/sync', { push: [], since: 0 }, T2);
-    expect(r2).toMatchObject({ status: 200, body: { entries: [], me: { id: 'u2' } } });
+    const mine = makeEntry(OCT8, 9);
+    const userOneSync = await post(db, '/api/sync', { pushedEntries: [mine], sinceCursor: 0 }, USER_ONE_TOKEN);
+    expect(userOneSync).toMatchObject({ status: 200, body: { entries: [mine], account: { id: 'u1', name: 'One' } } });
+    const userTwoSync = await post(db, '/api/sync', { pushedEntries: [], sinceCursor: 0 }, USER_TWO_TOKEN);
+    expect(userTwoSync).toMatchObject({ status: 200, body: { entries: [], account: { id: 'u2' } } });
   });
 
   it('rejects a missing or unknown token before touching storage', async () => {
     const db = setup();
-    expect((await post(db, '/api/sync', { push: [e(OCT8)], since: 0 })).status).toBe(401);
-    expect((await post(db, '/api/sync', { push: [e(OCT8)], since: 0 }, T1 + 'x')).status).toBe(401);
+    expect((await post(db, '/api/sync', { pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 })).status).toBe(401);
+    expect((await post(db, '/api/sync', { pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 }, USER_ONE_TOKEN + 'x')).status).toBe(401);
     expect((await post(db, '/api/invite', { kind: 'friend' })).status).toBe(401);
     expect(db.entries.size).toBe(0);
   });
 
   it('rejects invalid bodies and unknown routes', async () => {
     const db = setup();
-    expect((await route({ method: 'POST', path: '/api/sync', headers: { 'x-pullup-token': T1 }, body: '{' }, { db })).status).toBe(400);
-    expect((await post(db, '/api/sync', { push: [{ id: 'x', reps: 999 }], since: 0 }, T1)).status).toBe(400);
-    expect((await post(db, '/api/sync', { push: [], since: -1 }, T1)).status).toBe(400);
-    expect((await post(db, '/api/sync', { push: [] }, T1)).status).toBe(400);
-    expect((await post(db, '/api/invite', { kind: 'admin' }, T1)).status).toBe(400);
+    expect((await route({ method: 'POST', path: '/api/sync', headers: { 'x-pullup-token': USER_ONE_TOKEN }, body: '{' }, { db })).status).toBe(400);
+    expect((await post(db, '/api/sync', { pushedEntries: [{ id: 'x', reps: 999 }], sinceCursor: 0 }, USER_ONE_TOKEN)).status).toBe(400);
+    expect((await post(db, '/api/sync', { pushedEntries: [], sinceCursor: -1 }, USER_ONE_TOKEN)).status).toBe(400);
+    expect((await post(db, '/api/sync', { pushedEntries: [] }, USER_ONE_TOKEN)).status).toBe(400);
+    expect((await post(db, '/api/invite', { kind: 'admin' }, USER_ONE_TOKEN)).status).toBe(400);
     expect((await route({ method: 'GET', path: '/api/sync', headers: {}, body: '' }, { db })).status).toBe(405);
-    expect((await post(db, '/api/other', {}, T1)).status).toBe(404);
+    expect((await post(db, '/api/other', {}, USER_ONE_TOKEN)).status).toBe(404);
   });
 
   it('a friend invite creates a new account, once', async () => {
     const db = setup();
-    const inv = await post(db, '/api/invite', { kind: 'friend' }, T1);
-    const code = (inv.body as { code: string }).code;
+    const invited = await post(db, '/api/invite', { kind: 'friend' }, USER_ONE_TOKEN);
+    const code = (invited.body as { code: string }).code;
     expect((await post(db, '/api/join', { code, name: '   ' })).status).toBe(400);
     const joined = await post(db, '/api/join', { code, name: '  Sam  ' });
-    expect(joined).toMatchObject({ status: 200, body: { me: { name: 'Sam' } } });
-    const { token, me } = joined.body as { token: string; me: { id: string } };
-    expect(me.id).not.toMatch(/^u[12]$/);
-    expect(await post(db, '/api/sync', { push: [], since: 0 }, token)).toMatchObject({ status: 200, body: { me } });
+    expect(joined).toMatchObject({ status: 200, body: { account: { name: 'Sam' } } });
+    const { token, account } = joined.body as { token: string; account: { id: string } };
+    expect(account.id).not.toMatch(/^u[12]$/);
+    expect(await post(db, '/api/sync', { pushedEntries: [], sinceCursor: 0 }, token)).toMatchObject({ status: 200, body: { account } });
     expect((await post(db, '/api/join', { code, name: 'Sam again' })).status).toBe(410);
   });
 
   it('a device link signs into the same account and expires', async () => {
     const db = setup();
-    const t0 = Date.now();
-    await post(db, '/api/sync', { push: [e(OCT8, 4)], since: 0 }, T1);
-    const link = (await createInvite(db, 'u1', 'device', { now: () => t0 })).code;
-    const joined = await post(db, '/api/join', { code: link }, undefined, () => t0 + 1000);
+    const startMs = Date.now();
+    await post(db, '/api/sync', { pushedEntries: [makeEntry(OCT8, 4)], sinceCursor: 0 }, USER_ONE_TOKEN);
+    const link = (await createInvite(db, 'u1', 'device', { now: () => startMs })).code;
+    const joined = await post(db, '/api/join', { code: link }, undefined, () => startMs + 1000);
     const { token } = joined.body as { token: string };
-    const synced = await post(db, '/api/sync', { push: [], since: 0 }, token);
-    expect(synced).toMatchObject({ status: 200, body: { me: { id: 'u1' } } });
+    const synced = await post(db, '/api/sync', { pushedEntries: [], sinceCursor: 0 }, token);
+    expect(synced).toMatchObject({ status: 200, body: { account: { id: 'u1' } } });
     expect((synced.body as { entries: unknown[] }).entries).toHaveLength(1);
 
-    const late = (await createInvite(db, 'u1', 'device', { now: () => t0 })).code;
-    expect((await post(db, '/api/join', { code: late }, undefined, () => t0 + DEVICE_LINK_MS)).status).toBe(410);
+    const late = (await createInvite(db, 'u1', 'device', { now: () => startMs })).code;
+    expect((await post(db, '/api/join', { code: late }, undefined, () => startMs + DEVICE_LINK_TTL_MS)).status).toBe(410);
   });
 
   it('rejects a code that was never issued', async () => {

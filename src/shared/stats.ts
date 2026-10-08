@@ -1,5 +1,5 @@
 import type { Entry } from './model';
-import { addDays, dayDiff, dayKey, startOfWeek } from './time';
+import { addDays, dayKey, daysBetween, startOfWeek } from './time';
 
 export interface DayTotal {
   day: string;
@@ -8,42 +8,42 @@ export interface DayTotal {
 }
 
 export function liveEntries(entries: Iterable<Entry>): Entry[] {
-  const out: Entry[] = [];
-  for (const e of entries) if (!e.deleted) out.push(e);
-  return out;
+  const undeleted: Entry[] = [];
+  for (const entry of entries) if (!entry.deleted) undeleted.push(entry);
+  return undeleted;
 }
 
 export function dailyTotals(entries: Iterable<Entry>): Map<string, DayTotal> {
   const totals = new Map<string, DayTotal>();
-  for (const e of entries) {
-    if (e.deleted) continue;
-    const day = dayKey(e.ts);
-    const t = totals.get(day) ?? { day, reps: 0, sets: 0 };
-    t.reps += e.reps;
-    t.sets += 1;
-    totals.set(day, t);
+  for (const entry of entries) {
+    if (entry.deleted) continue;
+    const day = dayKey(entry.doneAt);
+    const dayTotal = totals.get(day) ?? { day, reps: 0, sets: 0 };
+    dayTotal.reps += entry.reps;
+    dayTotal.sets += 1;
+    totals.set(day, dayTotal);
   }
   return totals;
 }
 
-/** `n` consecutive days ending at `endDay`, zero-filled, oldest first. */
-export function series(totals: Map<string, DayTotal>, endDay: string, n: number): DayTotal[] {
-  const out: DayTotal[] = [];
-  for (let i = n - 1; i >= 0; i--) {
+/** `dayCount` consecutive days ending at `endDay`, zero-filled, oldest first. */
+export function dailySeries(totals: Map<string, DayTotal>, endDay: string, dayCount: number): DayTotal[] {
+  const dayTotals: DayTotal[] = [];
+  for (let i = dayCount - 1; i >= 0; i--) {
     const day = addDays(endDay, -i);
-    out.push(totals.get(day) ?? { day, reps: 0, sets: 0 });
+    dayTotals.push(totals.get(day) ?? { day, reps: 0, sets: 0 });
   }
-  return out;
+  return dayTotals;
 }
 
-/** Trailing mean of `window` days ending at each point (shorter at the start of history). */
-export function trailingAverage(totals: Map<string, DayTotal>, days: string[], window: number, firstDay: string | null): (number | null)[] {
+/** Trailing mean of `windowDays` days ending at each point (shorter at the start of history). */
+export function trailingAverage(totals: Map<string, DayTotal>, days: string[], windowDays: number, firstDay: string | null): (number | null)[] {
   return days.map((day) => {
     if (!firstDay || day < firstDay) return null;
-    const span = Math.min(window, dayDiff(firstDay, day) + 1);
+    const spanDays = Math.min(windowDays, daysBetween(firstDay, day) + 1);
     let sum = 0;
-    for (let i = 0; i < span; i++) sum += totals.get(addDays(day, -i))?.reps ?? 0;
-    return sum / span;
+    for (let i = 0; i < spanDays; i++) sum += totals.get(addDays(day, -i))?.reps ?? 0;
+    return sum / spanDays;
   });
 }
 
@@ -54,131 +54,131 @@ export interface Stats {
   /** Consecutive days meeting the goal, by the same rule. */
   goalStreak: number;
   /** Mean daily reps over the last 7 / 30 completed days (excludes today; never counts days before the first set). */
-  avg7: number | null;
-  avg30: number | null;
-  best: DayTotal | null;
+  avgDailyReps7Days: number | null;
+  avgDailyReps30Days: number | null;
+  bestDay: DayTotal | null;
   /** Reps this week (Mon–today) vs. last week over the same weekdays. */
   weekToDate: number;
   lastWeekToDate: number;
   lifetimeReps: number;
   lifetimeSets: number;
   activeDays: number;
-  avgSetSize30: number | null;
-  goalDays30: number;
+  avgSetReps30Days: number | null;
+  goalDaysLast30: number;
   firstDay: string | null;
 }
 
-export function computeStats(entries: Iterable<Entry>, now: number, goal: number): Stats {
+export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number): Stats {
   const totals = dailyTotals(entries);
-  const todayKey = dayKey(now);
+  const todayKey = dayKey(nowMs);
   const today = totals.get(todayKey) ?? { day: todayKey, reps: 0, sets: 0 };
 
   let firstDay: string | null = null;
-  let best: DayTotal | null = null;
+  let bestDay: DayTotal | null = null;
   let lifetimeReps = 0;
   let lifetimeSets = 0;
-  for (const t of totals.values()) {
-    if (t.day > todayKey) continue;
-    if (!firstDay || t.day < firstDay) firstDay = t.day;
-    if (!best || t.reps > best.reps || (t.reps === best.reps && t.day > best.day)) best = t;
-    lifetimeReps += t.reps;
-    lifetimeSets += t.sets;
+  for (const dayTotal of totals.values()) {
+    if (dayTotal.day > todayKey) continue;
+    if (!firstDay || dayTotal.day < firstDay) firstDay = dayTotal.day;
+    if (!bestDay || dayTotal.reps > bestDay.reps || (dayTotal.reps === bestDay.reps && dayTotal.day > bestDay.day)) bestDay = dayTotal;
+    lifetimeReps += dayTotal.reps;
+    lifetimeSets += dayTotal.sets;
   }
 
-  const runLength = (ok: (t: DayTotal | undefined) => boolean) => {
-    let day = ok(totals.get(todayKey)) ? todayKey : addDays(todayKey, -1);
-    let n = 0;
-    while (ok(totals.get(day))) {
-      n++;
+  const runLength = (isCounted: (dayTotal: DayTotal | undefined) => boolean) => {
+    let day = isCounted(totals.get(todayKey)) ? todayKey : addDays(todayKey, -1);
+    let runDays = 0;
+    while (isCounted(totals.get(day))) {
+      runDays++;
       day = addDays(day, -1);
     }
-    return n;
+    return runDays;
   };
 
-  const completedAvg = (window: number) => {
+  const completedAvg = (windowDays: number) => {
     if (!firstDay) return null;
     const yesterday = addDays(todayKey, -1);
-    const span = Math.min(window, dayDiff(firstDay, yesterday) + 1);
-    if (span <= 0) return null;
+    const spanDays = Math.min(windowDays, daysBetween(firstDay, yesterday) + 1);
+    if (spanDays <= 0) return null;
     let sum = 0;
-    for (let i = 0; i < span; i++) sum += totals.get(addDays(yesterday, -i))?.reps ?? 0;
-    return sum / span;
+    for (let i = 0; i < spanDays; i++) sum += totals.get(addDays(yesterday, -i))?.reps ?? 0;
+    return sum / spanDays;
   };
 
   const weekStart = startOfWeek(todayKey);
-  const elapsed = dayDiff(weekStart, todayKey);
+  const elapsedDays = daysBetween(weekStart, todayKey);
   let weekToDate = 0;
   let lastWeekToDate = 0;
-  for (let i = 0; i <= elapsed; i++) {
+  for (let i = 0; i <= elapsedDays; i++) {
     weekToDate += totals.get(addDays(weekStart, i))?.reps ?? 0;
     lastWeekToDate += totals.get(addDays(weekStart, i - 7))?.reps ?? 0;
   }
 
-  let reps30 = 0;
-  let sets30 = 0;
-  let goalDays30 = 0;
+  let repsLast30 = 0;
+  let setsLast30 = 0;
+  let goalDaysLast30 = 0;
   for (let i = 0; i < 30; i++) {
-    const t = totals.get(addDays(todayKey, -i));
-    if (!t) continue;
-    reps30 += t.reps;
-    sets30 += t.sets;
-    if (t.reps >= goal) goalDays30++;
+    const dayTotal = totals.get(addDays(todayKey, -i));
+    if (!dayTotal) continue;
+    repsLast30 += dayTotal.reps;
+    setsLast30 += dayTotal.sets;
+    if (dayTotal.reps >= goalReps) goalDaysLast30++;
   }
 
   return {
     today,
-    streak: runLength((t) => !!t && t.reps > 0),
-    goalStreak: runLength((t) => !!t && t.reps >= goal),
-    avg7: completedAvg(7),
-    avg30: completedAvg(30),
-    best,
+    streak: runLength((dayTotal) => !!dayTotal && dayTotal.reps > 0),
+    goalStreak: runLength((dayTotal) => !!dayTotal && dayTotal.reps >= goalReps),
+    avgDailyReps7Days: completedAvg(7),
+    avgDailyReps30Days: completedAvg(30),
+    bestDay,
     weekToDate,
     lastWeekToDate,
     lifetimeReps,
     lifetimeSets,
-    activeDays: [...totals.keys()].filter((d) => d <= todayKey).length,
-    avgSetSize30: sets30 ? reps30 / sets30 : null,
-    goalDays30,
+    activeDays: [...totals.keys()].filter((day) => day <= todayKey).length,
+    avgSetReps30Days: setsLast30 ? repsLast30 / setsLast30 : null,
+    goalDaysLast30,
     firstDay,
   };
 }
 
 /** The rep count logged most often in the last 30 days, for highlighting the usual button. */
-export function usualReps(entries: Iterable<Entry>, now: number): number | null {
-  const cutoff = addDays(dayKey(now), -29);
-  const counts = new Map<number, number>();
-  for (const e of entries) {
-    if (e.deleted || dayKey(e.ts) < cutoff) continue;
-    counts.set(e.reps, (counts.get(e.reps) ?? 0) + 1);
+export function usualReps(entries: Iterable<Entry>, nowMs: number): number | null {
+  const cutoff = addDays(dayKey(nowMs), -29);
+  const setCountsByReps = new Map<number, number>();
+  for (const entry of entries) {
+    if (entry.deleted || dayKey(entry.doneAt) < cutoff) continue;
+    setCountsByReps.set(entry.reps, (setCountsByReps.get(entry.reps) ?? 0) + 1);
   }
-  let best: number | null = null;
-  let bestN = 0;
-  for (const [reps, n] of counts) {
-    if (n > bestN || (n === bestN && best !== null && reps > best)) {
-      best = reps;
-      bestN = n;
+  let mostCommonReps: number | null = null;
+  let mostCommonCount = 0;
+  for (const [reps, setCount] of setCountsByReps) {
+    if (setCount > mostCommonCount || (setCount === mostCommonCount && mostCommonReps !== null && reps > mostCommonReps)) {
+      mostCommonReps = reps;
+      mostCommonCount = setCount;
     }
   }
-  return best;
+  return mostCommonReps;
 }
 
 export interface HeaviestSet {
-  lbs: number;
+  addedWeightLbs: number;
   reps: number;
   day: string;
 }
 
 /** Most added weight in one set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
-export function heaviestSet(entries: Iterable<Entry>, now: number): HeaviestSet | null {
-  const todayKey = dayKey(now);
-  let best: HeaviestSet | null = null;
-  for (const e of entries) {
-    if (e.deleted || !e.lbs) continue;
-    const day = dayKey(e.ts);
+export function heaviestSet(entries: Iterable<Entry>, nowMs: number): HeaviestSet | null {
+  const todayKey = dayKey(nowMs);
+  let heaviest: HeaviestSet | null = null;
+  for (const entry of entries) {
+    if (entry.deleted || !entry.addedWeightLbs) continue;
+    const day = dayKey(entry.doneAt);
     if (day > todayKey) continue;
-    if (!best || e.lbs > best.lbs || (e.lbs === best.lbs && (e.reps > best.reps || (e.reps === best.reps && day > best.day)))) {
-      best = { lbs: e.lbs, reps: e.reps, day };
+    if (!heaviest || entry.addedWeightLbs > heaviest.addedWeightLbs || (entry.addedWeightLbs === heaviest.addedWeightLbs && (entry.reps > heaviest.reps || (entry.reps === heaviest.reps && day > heaviest.day)))) {
+      heaviest = { addedWeightLbs: entry.addedWeightLbs, reps: entry.reps, day };
     }
   }
-  return best;
+  return heaviest;
 }
