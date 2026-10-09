@@ -4,7 +4,7 @@ import type { Tracker } from './tracker';
 
 export function useTracker(tracker: Tracker): number {
   const [version, setVersion] = useState(0);
-  useEffect(() => tracker.subscribe(() => setVersion((n) => n + 1)), [tracker]);
+  useEffect(() => tracker.subscribe(() => setVersion((previousVersion) => previousVersion + 1)), [tracker]);
   return version;
 }
 
@@ -13,21 +13,21 @@ export function useNow(): number {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const tick = () => setNow(Date.now());
-    const minute = setInterval(tick, 60_000);
-    const midnight = setTimeout(tick, msUntilNextDay(now) + 500);
-    const onVis = () => document.visibilityState === 'visible' && tick();
-    document.addEventListener('visibilitychange', onVis);
+    const minuteInterval = setInterval(tick, 60_000);
+    const midnightTimeout = setTimeout(tick, msUntilNextDay(now) + 500);
+    const onVisibilityChange = () => document.visibilityState === 'visible' && tick();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      clearInterval(minute);
-      clearTimeout(midnight);
-      document.removeEventListener('visibilitychange', onVis);
+      clearInterval(minuteInterval);
+      clearTimeout(midnightTimeout);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [now]);
   return now;
 }
 
-export function haptic(ms = 10): void {
+export function haptic(durationMs = 10): void {
   try {
-    navigator.vibrate?.(ms);
+    navigator.vibrate?.(durationMs);
   } catch {}
 }
