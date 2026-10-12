@@ -108,6 +108,32 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     for (const [day, expected] of Object.entries(golden.dayTotals!)) expect(await db.getDayTotal('golden', day)).toMatchObject({ day, ...expected });
   });
 
+  it('creates a definition once, adopting it in the same write, and updates it only from the version read', async () => {
+    const stairs = { id: 'x-dddddddddddddddd', name: 'Stairs', measure: 'count' as const, unit: 'lap', createdBy: 'dx', createdAt: 1, updatedAt: 1, version: 1 };
+    const intoTuck = { id: 'v-dddddddddddddddd', exerciseId: 'pull-up', name: 'Into tuck', createdBy: 'dx', createdAt: 1, updatedAt: 1, version: 1 };
+    await db.createDefinition(stairs, 'dx', 5);
+    await db.createDefinition(intoTuck, 'dx', 5);
+    await expect(db.createDefinition({ ...stairs, name: 'Again' }, 'dy', 6)).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.adoptedDefinitionKeys('dy')).toEqual([]);
+    expect(await db.adoptedDefinitionKeys('dx')).toEqual([{ exerciseId: 'pull-up', variationId: 'v-dddddddddddddddd' }, { exerciseId: 'x-dddddddddddddddd' }]);
+
+    await expect(db.putDefinition({ ...stairs, name: 'Lost', version: 2 }, 7)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.putDefinition({ ...stairs, name: 'Red Rocks stairs', updatedAt: 2, version: 2 }, 1);
+    await db.adoptDefinition('dy', { exerciseId: 'pull-up', variationId: 'v-dddddddddddddddd' }, 8);
+    const definitions = await db.getDefinitions([{ exerciseId: 'x-dddddddddddddddd' }, { exerciseId: 'pull-up', variationId: 'v-dddddddddddddddd' }, { exerciseId: 'x-dddddddddddddddd' }, { exerciseId: 'x-zzzzzzzzzzzzzzzz' }]);
+    expect(definitions.get('x-dddddddddddddddd')).toEqual({ ...stairs, name: 'Red Rocks stairs', updatedAt: 2, version: 2 });
+    expect(definitions.get('pull-up/v-dddddddddddddddd')).toEqual(intoTuck);
+    expect(definitions.size).toBe(2);
+    expect(await db.adoptedDefinitionKeys('dy')).toEqual([{ exerciseId: 'pull-up', variationId: 'v-dddddddddddddddd' }]);
+  });
+
+  it('batch-gets more definitions than one request holds', async () => {
+    const ids = Array.from({ length: 130 }, (_, i) => `x-qq${'abcdefghijklmnopqrstuvwxyz234567'[i % 32]!.repeat(7)}${'abcdefghijklmnopqrstuvwxyz234567'[Math.floor(i / 32)]!.repeat(7)}`);
+    await Promise.all(ids.map((id) => db.createDefinition({ id, name: id, measure: 'time', createdBy: 'bx', createdAt: 1, updatedAt: 1, version: 1 }, 'bx', 1)));
+    expect((await db.getDefinitions(ids.map((exerciseId) => ({ exerciseId })))).size).toBe(130);
+    expect(await db.adoptedDefinitionKeys('bx')).toHaveLength(130);
+  });
+
   it('redeems an invite exactly once, even when raced', async () => {
     const code = 'real-invite-code-0123456789';
     await db.putInvite(hashToken(code), { kind: 'friend', createdBy: 'admin', expiresAt: Date.now() + 60_000 });

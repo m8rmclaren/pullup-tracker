@@ -1,6 +1,7 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, type BatchGetCommandOutput, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { type Db, type StoredDayTotal, type Invite, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
+import { type Db, type StoredDayTotal, type Invite, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, timeZone? (absent means America/Denver)
@@ -8,12 +9,24 @@ import { type Db, type StoredDayTotal, type Invite, type StoredEntry, type User,
 //                           (LSIs `by-server-written-at` and `by-done-at` index these)
 //   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, version, userId; monthPk/monthSk feed GSI `by-month`
 //   T#<hash>    T           device token: userId, createdAt
+//   U#<userId>  A#<key>     adopted definition (key is definitionKeyString: `x-…` or `<exerciseId>/v-…`): adoptedAt
 //   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
+//   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
+//   X#<exId>    V#<varId>   created variation on that exercise, built-in or created: id, exerciseId, name, createdBy?, createdAt, updatedAt, version
 // Only entries carry `serverWrittenAt` and `doneAt`, and only day totals carry `monthPk`, so every index is sparse.
 
 const userPartitionKey = (userId: string) => `U#${userId}`;
 const ENTRY_SK_PREFIX = 'E#';
 const DAY_SK_PREFIX = 'D#';
+const ADOPTED_SK_PREFIX = 'A#';
+
+function definitionItemKey(key: DefinitionKey) {
+  return { pk: `X#${key.exerciseId}`, sk: key.variationId ? `V#${key.variationId}` : 'X' };
+}
+
+function itemToDefinition(item: Record<string, unknown>): StoredDefinition {
+  return { ...normalizeDefinition(item as unknown as Definition), version: item.version as number };
+}
 const MAX_BATCH_GET = 100;
 
 function itemToEntry(item: Record<string, unknown>): StoredEntry {
@@ -55,18 +68,78 @@ export class DynamoDb implements Db {
     private tableName: string,
   ) {}
 
-  async getEntries(userId: string, ids: string[]) {
-    const entriesById = new Map<string, StoredEntry>();
-    for (let i = 0; i < ids.length; i += MAX_BATCH_GET) {
-      let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + MAX_BATCH_GET).map((id) => ({ pk: userPartitionKey(userId), sk: ENTRY_SK_PREFIX + id }));
+  /** Strongly consistent, in chunks, retrying whatever DynamoDB leaves unprocessed. */
+  private async batchGetItems(itemKeys: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    const items: Record<string, unknown>[] = [];
+    for (let i = 0; i < itemKeys.length; i += MAX_BATCH_GET) {
+      let keys: Record<string, unknown>[] | undefined = itemKeys.slice(i, i + MAX_BATCH_GET);
       for (let attempt = 0; keys?.length; attempt++) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(1000, 25 * 2 ** attempt)));
         const response: BatchGetCommandOutput = await this.documentClient.send(new BatchGetCommand({ RequestItems: { [this.tableName]: { Keys: keys, ConsistentRead: true } } }));
-        for (const item of response.Responses?.[this.tableName] ?? []) entriesById.set(item.id as string, itemToEntry(item));
+        items.push(...(response.Responses?.[this.tableName] ?? []));
         keys = response.UnprocessedKeys?.[this.tableName]?.Keys;
       }
     }
-    return entriesById;
+    return items;
+  }
+
+  async getEntries(userId: string, ids: string[]) {
+    const items = await this.batchGetItems(ids.map((id) => ({ pk: userPartitionKey(userId), sk: ENTRY_SK_PREFIX + id })));
+    return new Map(items.map((item) => [item.id as string, itemToEntry(item)]));
+  }
+
+  async getDefinitions(keys: DefinitionKey[]) {
+    const uniqueKeys = [...new Map(keys.map((key) => [definitionKeyString(key), key])).values()];
+    const items = await this.batchGetItems(uniqueKeys.map(definitionItemKey));
+    const definitionsByKey = new Map<string, StoredDefinition>();
+    for (const item of items) {
+      const definition = itemToDefinition(item);
+      definitionsByKey.set(definitionKeyString(definitionKeyOf(definition)), definition);
+    }
+    return definitionsByKey;
+  }
+
+  async createDefinition(definition: StoredDefinition, userId: string, adoptedAt: number) {
+    const key = definitionKeyOf(definition);
+    await mapConditionFailure(
+      this.documentClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            { Put: { TableName: this.tableName, Item: { ...definitionItemKey(key), ...definition }, ConditionExpression: 'attribute_not_exists(pk)' } },
+            { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: ADOPTED_SK_PREFIX + definitionKeyString(key), adoptedAt } } },
+          ],
+        }),
+      ),
+    );
+  }
+
+  async putDefinition(definition: StoredDefinition, expectedVersion: number) {
+    const Item = { ...definitionItemKey(definitionKeyOf(definition)), ...definition };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
+  }
+
+  async adoptedDefinitionKeys(userId: string) {
+    const keys: DefinitionKey[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const response: QueryCommandOutput = await this.documentClient.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          ConsistentRead: true,
+          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+          ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': ADOPTED_SK_PREFIX },
+          ProjectionExpression: 'sk',
+          ExclusiveStartKey: exclusiveStartKey,
+        }),
+      );
+      for (const item of response.Items ?? []) keys.push(parseDefinitionKeyString((item.sk as string).slice(ADOPTED_SK_PREFIX.length)));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return keys;
+  }
+
+  async adoptDefinition(userId: string, key: DefinitionKey, adoptedAt: number) {
+    await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: ADOPTED_SK_PREFIX + definitionKeyString(key), adoptedAt } }));
   }
 
   async putEntry(userId: string, entry: StoredEntry, expectedServerWrittenAt: number | null) {

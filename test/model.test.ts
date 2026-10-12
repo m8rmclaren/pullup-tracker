@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { type Entry, clampAddedWeight, isValidEntry, mergeInto, mergeLists, normalizeEntry, pickWinner } from '../src/shared/model';
+import { type Definition, isValidDefinition, mergeDefinitionsInto, pickDefinitionWinner } from '../src/shared/definitions';
 import { loadFixture } from './fixtures';
 
 interface MergeFixture {
   winners: { name: string; a: Entry; b: Entry; winner: 'a' | 'b' }[];
   replicas: { name: string; replicas: Entry[][]; merged: Entry[] }[];
   normalize: { name: string; entry: Entry; normalized: Entry }[];
+  definitionWinners: { name: string; a: Definition; b: Definition; winner: 'a' | 'b' }[];
 }
 
 interface ValidationFixture {
   entries: { name: string; entry: unknown; valid: boolean }[];
+  definitions: { name: string; definition: unknown; valid: boolean }[];
 }
 
 const mergeFixture = loadFixture<MergeFixture>('merge.json');
@@ -41,11 +44,21 @@ describe('merge.json', () => {
   it.each(mergeFixture.normalize)('normalizeEntry: $name', ({ entry, normalized }) => {
     expect(normalizeEntry(entry)).toEqual(normalized);
   });
+
+  it.each(mergeFixture.definitionWinners)('pickDefinitionWinner: $name', ({ a, b, winner }) => {
+    const expected = winner === 'a' ? a : b;
+    expect(pickDefinitionWinner(a, b)).toBe(expected);
+    expect(pickDefinitionWinner(b, a)).toBe(expected);
+  });
 });
 
 describe('validation.json', () => {
   it.each(validationFixture.entries)('isValidEntry: $name → $valid', ({ entry, valid }) => {
     expect(isValidEntry(entry)).toBe(valid);
+  });
+
+  it.each(validationFixture.definitions)('isValidDefinition: $name → $valid', ({ definition, valid }) => {
+    expect(isValidDefinition(definition)).toBe(valid);
   });
 });
 
@@ -57,6 +70,18 @@ describe('mergeLists', () => {
     expect(mergeLists([entry('a', 2)], [entry('a', 1)]).changed).toBe(false);
     expect(mergeLists([entry('a', 1)], [entry('a', 2)]).changed).toBe(true);
     expect(mergeLists([entry('a', 1, { addedWeightLbs: 25 })], [entry('a', 1, { addedWeightLbs: 25 })]).changed).toBe(false);
+  });
+});
+
+describe('mergeDefinitionsInto', () => {
+  it('keeps the newer edit, and learns the creator from the server’s copy of the same version', () => {
+    const local: Definition = { id: 'x-k3p7abcdefgh2345', name: 'Stairs', measure: 'count', unit: 'lap', createdAt: 1, updatedAt: 2 };
+    const definitions = new Map<string, Definition>();
+    expect(mergeDefinitionsInto(definitions, [local])).toEqual([local.id]);
+    expect(mergeDefinitionsInto(definitions, [{ ...local, name: 'Old', updatedAt: 1 }])).toEqual([]);
+    expect(mergeDefinitionsInto(definitions, [{ ...local, createdBy: 'u1' }])).toEqual([local.id]);
+    expect(definitions.get(local.id)).toEqual({ ...local, createdBy: 'u1' });
+    expect(mergeDefinitionsInto(definitions, [{ ...local, createdBy: 'u1' }])).toEqual([]);
   });
 });
 

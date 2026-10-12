@@ -1,11 +1,12 @@
 import { useState } from 'preact/hooks';
 import type { Entry } from '../shared/model';
-import { type Stats, dailyTotals, dailySeries, heaviestSet, trailingAverage } from '../shared/stats';
+import { type Stats, type UnitLookup, dailyTotals, dailySeries, heaviestSet, trailingAverage } from '../shared/stats';
 import { addDays, dayKey, formatDay } from '../shared/time';
 import { BarChart, Heatmap } from './charts';
 
 interface TrendsProps {
   entries: Entry[];
+  unitOf: UnitLookup;
   stats: Stats;
   now: number;
   timeZone: string;
@@ -15,10 +16,10 @@ interface TrendsProps {
 
 const formatOneDecimal = (value: number | null) => (value === null ? '—' : value.toFixed(value >= 100 ? 0 : 1));
 
-export function Trends({ entries, stats, now, timeZone, goal, onOpenDay }: TrendsProps) {
+export function Trends({ entries, unitOf, stats, now, timeZone, goal, onOpenDay }: TrendsProps) {
   const [rangeDays, setRangeDays] = useState<30 | 90>(30);
   const today = dayKey(now, timeZone);
-  const dayTotals = dailyTotals(entries, timeZone);
+  const dayTotals = dailyTotals(entries, timeZone, unitOf);
   const chartDays = dailySeries(dayTotals, today, rangeDays);
   const trailingAverages = trailingAverage(dayTotals, chartDays.map((dayTotal) => dayTotal.day), 7, stats.firstDay);
   const weekOverWeekDelta = stats.weekToDate - stats.lastWeekToDate;

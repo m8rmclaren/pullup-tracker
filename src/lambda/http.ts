@@ -1,6 +1,8 @@
 import { type Entry, type InviteRequest, MAX_PUSHED_ENTRIES, PROTOCOL_VERSION, isValidEntry } from '../shared/model';
 import { DEFAULT_TIME_ZONE } from '../shared/time';
+import { type Definition, MAX_PUSHED_DEFINITIONS, isValidDefinition } from '../shared/definitions';
 import { createInvite, redeemInvite } from './accounts';
+import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
 import { hashToken, isPlausibleSecret } from './auth';
 import type { Db } from './db';
 import { type Clock, syncEntries } from './sync';
@@ -71,14 +73,23 @@ async function authenticate(request: HttpRequest, deps: RouteDeps): Promise<stri
 }
 
 async function sync(userId: string, body: Record<string, unknown>, deps: RouteDeps): Promise<HttpResponse> {
-  const { pushedEntries, sinceCursor } = body;
+  const { pushedEntries, sinceCursor, pushedDefinitions = [] } = body;
   if (!Array.isArray(pushedEntries) || pushedEntries.length > MAX_PUSHED_ENTRIES || !pushedEntries.every(isValidEntry)) {
     return errorResponse(400, `pushedEntries must be an array of at most ${MAX_PUSHED_ENTRIES} valid entries`);
+  }
+  if (!Array.isArray(pushedDefinitions) || pushedDefinitions.length > MAX_PUSHED_DEFINITIONS || !pushedDefinitions.every(isValidDefinition)) {
+    return errorResponse(400, `pushedDefinitions must be an array of at most ${MAX_PUSHED_DEFINITIONS} valid definitions`);
   }
   if (!Number.isSafeInteger(sinceCursor) || (sinceCursor as number) < 0) return errorResponse(400, 'sinceCursor must be a non-negative integer');
   const user = await deps.db.getUser(userId);
   if (!user) return errorResponse(401, 'This account no longer exists.');
   const timeZone = user.timeZone ?? DEFAULT_TIME_ZONE;
-  const synced = await syncEntries(deps.db, userId, timeZone, pushedEntries as Entry[], sinceCursor as number, clockFrom(deps));
-  return { status: 200, body: { ...synced, account: { id: user.id, name: user.name, timeZone } } };
+  const clock = clockFrom(deps);
+
+  await mergePushedDefinitions(deps.db, userId, pushedDefinitions as Definition[], clock);
+  const mismatched = await findMeasureMismatch(deps.db, pushedEntries as Entry[]);
+  if (mismatched) return errorResponse(400, `entry ${mismatched.id} doesn't match its exercise's measure`);
+  const synced = await syncEntries(deps.db, userId, timeZone, pushedEntries as Entry[], sinceCursor as number, clock);
+  const definitions = await definitionsForSync(deps.db, userId, pushedEntries as Entry[], synced.entries, clock);
+  return { status: 200, body: { ...synced, definitions, account: { id: user.id, name: user.name, timeZone } } };
 }

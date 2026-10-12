@@ -86,9 +86,9 @@ export function Today({ tracker, stats, now, timeZone, usualSetReps, onLogged, o
           <ul class="set-chips">
             {todaysSets.map((entry) => (
               <li key={entry.id}>
-                <button type="button" class="set-chip" onClick={() => onEdit(entry)} aria-label={`${describeSet(entry)} at ${formatClock(entry.doneAt, timeZone)}, edit`}>
-                  <b>{formatAmount(entry)}</b>
-                  {exerciseLabel(entry) ? <em class="set-chip__exercise">{exerciseLabel(entry)}</em> : null}
+                <button type="button" class="set-chip" onClick={() => onEdit(entry)} aria-label={`${describeSet(entry, tracker)} at ${formatClock(entry.doneAt, timeZone)}, edit`}>
+                  <b>{formatAmount(entry, tracker)}</b>
+                  {exerciseLabel(entry, tracker) ? <em class="set-chip__exercise">{exerciseLabel(entry, tracker)}</em> : null}
                   {entry.addedWeightLbs ? <em class="set-chip__lbs">{formatAddedWeight(entry.addedWeightLbs)}</em> : null}
                   <span>{formatClock(entry.doneAt, timeZone)}</span>
                 </button>

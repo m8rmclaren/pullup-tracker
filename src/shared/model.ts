@@ -1,4 +1,5 @@
 import { PULL_UP, builtInExercise, builtInVariation, isBuiltInId, isCreatedExerciseId, isCreatedVariationId } from './catalog';
+import type { Definition } from './definitions';
 
 // The data model is a state-based CRDT: a map of entries keyed by id, where each
 // entry is a last-writer-wins register and deletes are tombstones. merge() is
@@ -167,6 +168,8 @@ export const PROTOCOL_VERSION = 2;
 export interface SyncRequest {
   protocolVersion: typeof PROTOCOL_VERSION;
   pushedEntries: Entry[];
+  /** Created exercises and variations, new or edited on this device. Merged before the entries, so an entry can log to one pushed alongside it. */
+  pushedDefinitions?: Definition[];
   /** The cursor from the previous response; 0 pulls everything. */
   sinceCursor: number;
 }
@@ -174,6 +177,8 @@ export interface SyncRequest {
 export interface SyncResponse {
   /** Entries written since `sinceCursor` (possibly a few already seen; merging them again is a no-op). */
   entries: Entry[];
+  /** Every created definition this account has adopted, plus any the returned entries point at. */
+  definitions: Definition[];
   cursor: number;
   account: Account;
 }
