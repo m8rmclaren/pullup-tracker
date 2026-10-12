@@ -72,6 +72,8 @@ export interface PendingChallenge {
   /** For signup: the account's name and zone, held until the passkey exists. */
   name?: string;
   timeZone?: string;
+  /** For signup: the goal this device was using, so boards can rank by it from day one. */
+  dailyGoalReps?: number;
   /** For signup through a link: its digest, redeemed in the same transaction. */
   linkCodeHash?: string;
   expiresAt: number;
@@ -120,6 +122,8 @@ export interface Db {
   entriesDoneBetween(userId: string, fromMs: number, toMs: number): Promise<StoredEntry[]>;
 
   getDayTotal(userId: string, day: string): Promise<StoredDayTotal | null>;
+  /** A user's stored day totals with `fromDay <= day <= toDay`, in day order. */
+  dayTotalsBetween(userId: string, fromDay: string, toDay: string): Promise<StoredDayTotal[]>;
   /** Same precondition scheme as putEntry, on `version`. */
   putDayTotal(userId: string, dayTotal: StoredDayTotal, expectedVersion: number | null): Promise<void>;
 
@@ -235,6 +239,13 @@ export class MemoryDb implements Db {
   async getDayTotal(userId: string, day: string) {
     const dayTotal = this.userDayTotals(userId).get(day);
     return dayTotal ? { ...dayTotal } : null;
+  }
+
+  async dayTotalsBetween(userId: string, fromDay: string, toDay: string) {
+    return [...this.userDayTotals(userId).values()]
+      .filter((dayTotal) => dayTotal.day >= fromDay && dayTotal.day <= toDay)
+      .sort((a, b) => (a.day < b.day ? -1 : 1))
+      .map((dayTotal) => ({ ...dayTotal }));
   }
 
   async putDayTotal(userId: string, dayTotal: StoredDayTotal, expectedVersion: number | null) {

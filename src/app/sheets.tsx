@@ -323,7 +323,7 @@ function SignedOutSection({ tracker, onOpenLink }: { tracker: Tracker; onOpenLin
     setBusyAction(action);
     setNote(null);
     try {
-      const response = action === 'signup' ? await signUpWithPasskey(cleanedName!, tracker.deviceTimeZone) : await signInWithPasskey();
+      const response = action === 'signup' ? await signUpWithPasskey({ name: cleanedName!, timeZone: tracker.deviceTimeZone, dailyGoalReps: tracker.goal() }) : await signInWithPasskey();
       tracker.signIn(response.token, response.account);
       void tracker.syncNow();
     } catch (error) {

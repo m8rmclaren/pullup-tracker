@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { encode } from 'uqr';
 import { MAX_NAME_LENGTH, type Friend, type ResolvedLink, cleanName } from '../shared/model';
 import { fetchFriends, isPasskeySupported, joinLink, passkeyErrorMessage, redeemLink, removeFriend, resolveLink, rotateFriendLink, shareUrl, signInWithPasskey, signUpWithPasskey } from './api';
+import { FriendsBoard } from './Board';
 import { Sheet } from './sheets';
 import type { Tracker } from './tracker';
 
@@ -32,7 +33,7 @@ function readCachedFriends(accountId: string | undefined): Friend[] | null {
   }
 }
 
-export function FriendsTab({ tracker, onOpenSettings }: { tracker: Tracker; onOpenSettings: () => void }) {
+export function FriendsTab({ tracker, onOpenSettings, onOpenProfile }: { tracker: Tracker; onOpenSettings: () => void; onOpenProfile: (userId: string) => void }) {
   const token = tracker.settings.token;
   const accountId = tracker.account?.id;
   const [friends, setFriends] = useState<Friend[] | null>(() => readCachedFriends(accountId));
@@ -98,6 +99,7 @@ export function FriendsTab({ tracker, onOpenSettings }: { tracker: Tracker; onOp
 
   return (
     <div class="friends">
+      <FriendsBoard tracker={tracker} onOpenProfile={onOpenProfile} />
       <section class="card">
         <header class="card__head">
           <h2>Friends</h2>
@@ -108,7 +110,9 @@ export function FriendsTab({ tracker, onOpenSettings }: { tracker: Tracker; onOp
         <ul class="people">
           {friends?.map((friend) => (
             <li key={friend.id}>
-              <span class="people__name">{friend.name}</span>
+              <button type="button" class="people__name people__link" onClick={() => onOpenProfile(friend.id)}>
+                {friend.name}
+              </button>
               {confirmingRemoveId === friend.id ? (
                 <span>
                   <button type="button" class="btn-text btn-text--danger" onClick={() => void remove(friend)}>
@@ -197,7 +201,7 @@ export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tra
     try {
       if (action === 'redeem') await redeemWith(token);
       else if (action === 'signup') {
-        const response = await signUpWithPasskey(cleanedName!, tracker.deviceTimeZone, code);
+        const response = await signUpWithPasskey({ name: cleanedName!, timeZone: tracker.deviceTimeZone, dailyGoalReps: tracker.goal(), linkCode: code });
         tracker.signIn(response.token, response.account);
         void tracker.syncNow();
         if (response.redeemed) finish(response.redeemed.friend.name);

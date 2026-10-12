@@ -1,0 +1,292 @@
+{
+  "cases": [
+    {
+      "name": "this week by count, across exercises: ties share a rank and list by name",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "count", "period": "week" },
+      "members": [
+        { "id": "u-ben", "name": "Ben", "timeZone": "America/Denver", "days": [{ "day": "2026-10-13", "reps": 30, "sets": 3, "bestSetReps": 10 }] },
+        { "id": "u-dee", "name": "Dee", "timeZone": "America/Denver", "days": [] },
+        {
+          "id": "u-cat",
+          "name": "Cat",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-10-11", "reps": 50, "sets": 5, "bestSetReps": 10 },
+            { "day": "2026-10-12", "reps": 5, "sets": 1, "bestSetReps": 5 }
+          ]
+        },
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-10-12", "reps": 20, "sets": 4, "bestSetReps": 6 },
+            { "day": "2026-10-14", "reps": 10, "sets": 2, "bestSetReps": 5 }
+          ]
+        }
+      ],
+      "rows": [
+        { "id": "u-ana", "name": "Ana", "value": 30, "rank": 1 },
+        { "id": "u-ben", "name": "Ben", "value": 30, "rank": 1 },
+        { "id": "u-cat", "name": "Cat", "value": 5, "rank": 3 },
+        { "id": "u-dee", "name": "Dee", "value": 0, "rank": 4 }
+      ]
+    },
+    {
+      "name": "active days break ties by count",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "activeDays", "period": "week" },
+      "members": [
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-10-12", "reps": 5, "sets": 1, "bestSetReps": 5 },
+            { "day": "2026-10-13", "reps": 5, "sets": 1, "bestSetReps": 5 }
+          ]
+        },
+        {
+          "id": "u-ben",
+          "name": "Ben",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-10-12", "reps": 30, "sets": 3, "bestSetReps": 10 },
+            { "day": "2026-10-14", "reps": 1, "sets": 1, "bestSetReps": 1 }
+          ]
+        },
+        { "id": "u-cat", "name": "Cat", "timeZone": "America/Denver", "days": [{ "day": "2026-10-13", "reps": 100, "sets": 10, "bestSetReps": 10 }] }
+      ],
+      "rows": [
+        { "id": "u-ben", "name": "Ben", "value": 2, "rank": 1 },
+        { "id": "u-ana", "name": "Ana", "value": 2, "rank": 2 },
+        { "id": "u-cat", "name": "Cat", "value": 1, "rank": 3 }
+      ]
+    },
+    {
+      "name": "sets count every set, and equal sets and count share a rank",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "sets", "period": "week" },
+      "members": [
+        { "id": "u-ben", "name": "Ben", "timeZone": "America/Denver", "days": [{ "day": "2026-10-13", "reps": 10, "sets": 5, "bestSetReps": 4 }] },
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [{ "day": "2026-10-12", "reps": 10, "sets": 5, "bestSetReps": 5, "holdSeconds": 90, "byExercise": { "pull-up": { "sets": 3, "reps": 10, "bestSetReps": 5 }, "plank": { "sets": 2, "holdSeconds": 90, "bestHoldSeconds": 60 } } }]
+        },
+        { "id": "u-cat", "name": "Cat", "timeZone": "America/Denver", "days": [{ "day": "2026-10-14", "reps": 12, "sets": 5, "bestSetReps": 4 }] }
+      ],
+      "rows": [
+        { "id": "u-cat", "name": "Cat", "value": 5, "rank": 1 },
+        { "id": "u-ana", "name": "Ana", "value": 5, "rank": 2 },
+        { "id": "u-ben", "name": "Ben", "value": 5, "rank": 2 }
+      ]
+    },
+    {
+      "name": "today is each member's own today, in their own zone",
+      "now": "2026-10-14T18:00:00Z",
+      "spec": { "metric": "count", "period": "today" },
+      "members": [
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-10-13", "reps": 50, "sets": 5, "bestSetReps": 10 },
+            { "day": "2026-10-14", "reps": 12, "sets": 2, "bestSetReps": 6 }
+          ]
+        },
+        {
+          "id": "u-kiri",
+          "name": "Kiri",
+          "timeZone": "Pacific/Auckland",
+          "days": [
+            { "day": "2026-10-14", "reps": 40, "sets": 4, "bestSetReps": 10 },
+            { "day": "2026-10-15", "reps": 7, "sets": 1, "bestSetReps": 7 }
+          ]
+        }
+      ],
+      "rows": [
+        { "id": "u-ana", "name": "Ana", "value": 12, "rank": 1 },
+        { "id": "u-kiri", "name": "Kiri", "value": 7, "rank": 2 }
+      ]
+    },
+    {
+      "name": "the month starts on each member's own first",
+      "now": "2026-10-31T18:00:00Z",
+      "spec": { "metric": "count", "period": "month" },
+      "members": [
+        {
+          "id": "u-kiri",
+          "name": "Kiri",
+          "timeZone": "Pacific/Auckland",
+          "days": [
+            { "day": "2026-10-31", "reps": 50, "sets": 5, "bestSetReps": 10 },
+            { "day": "2026-11-01", "reps": 3, "sets": 1, "bestSetReps": 3 }
+          ]
+        },
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-10-01", "reps": 5, "sets": 1, "bestSetReps": 5 },
+            { "day": "2026-10-31", "reps": 10, "sets": 2, "bestSetReps": 5 }
+          ]
+        }
+      ],
+      "rows": [
+        { "id": "u-ana", "name": "Ana", "value": 15, "rank": 1 },
+        { "id": "u-kiri", "name": "Kiri", "value": 3, "rank": 2 }
+      ]
+    },
+    {
+      "name": "percent of goal over the days so far; a member with no goal is listed last, unranked",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "goalPercent", "period": "week" },
+      "members": [
+        { "id": "u-cat", "name": "Cat", "timeZone": "America/Denver", "days": [{ "day": "2026-10-12", "reps": 100, "sets": 10, "bestSetReps": 10 }] },
+        { "id": "u-dee", "name": "Dee", "timeZone": "America/Denver", "dailyGoalReps": 40, "days": [] },
+        { "id": "u-ben", "name": "Ben", "timeZone": "America/Denver", "dailyGoalReps": 10, "days": [{ "day": "2026-10-12", "reps": 15, "sets": 3, "bestSetReps": 5 }] },
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "dailyGoalReps": 20,
+          "days": [
+            { "day": "2026-10-12", "reps": 20, "sets": 4, "bestSetReps": 5 },
+            { "day": "2026-10-13", "reps": 10, "sets": 2, "bestSetReps": 5 }
+          ]
+        }
+      ],
+      "rows": [
+        { "id": "u-ana", "name": "Ana", "value": 50, "rank": 1 },
+        { "id": "u-ben", "name": "Ben", "value": 50, "rank": 2 },
+        { "id": "u-dee", "name": "Dee", "value": 0, "rank": 3 },
+        { "id": "u-cat", "name": "Cat", "value": null, "rank": null }
+      ]
+    },
+    {
+      "name": "percent of goal on a fixed window that is still running counts only the days so far",
+      "now": "2026-10-03T12:00:00-06:00",
+      "spec": { "metric": "goalPercent", "period": { "fromDay": "2026-10-01", "toDay": "2026-10-31" } },
+      "members": [
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "dailyGoalReps": 30,
+          "days": [
+            { "day": "2026-10-01", "reps": 30, "sets": 5, "bestSetReps": 6 },
+            { "day": "2026-10-02", "reps": 10, "sets": 2, "bestSetReps": 5 }
+          ]
+        }
+      ],
+      "rows": [{ "id": "u-ana", "name": "Ana", "value": 44.444444444, "rank": 1 }]
+    },
+    {
+      "name": "one exercise, in its own unit, reading a pre-v2 day total as all pull-ups",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "count", "exerciseId": "pull-up", "period": "month" },
+      "members": [
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-09-30", "reps": 100, "sets": 10, "bestSetReps": 10 },
+            { "day": "2026-10-02", "reps": 41, "sets": 7, "bestSetReps": 8 },
+            {
+              "day": "2026-10-03",
+              "reps": 30,
+              "sets": 5,
+              "bestSetReps": 9,
+              "holdSeconds": 60,
+              "byExercise": {
+                "pull-up": { "sets": 2, "reps": 12, "bestSetReps": 7 },
+                "push-up": { "sets": 2, "reps": 18, "bestSetReps": 9 },
+                "plank": { "sets": 1, "holdSeconds": 60, "bestHoldSeconds": 60 }
+              }
+            }
+          ]
+        },
+        {
+          "id": "u-ben",
+          "name": "Ben",
+          "timeZone": "America/Denver",
+          "days": [{ "day": "2026-10-05", "reps": 50, "sets": 5, "bestSetReps": 10, "holdSeconds": 0, "byExercise": { "push-up": { "sets": 5, "reps": 50, "bestSetReps": 10 } } }]
+        }
+      ],
+      "rows": [
+        { "id": "u-ana", "name": "Ana", "value": 53, "rank": 1 },
+        { "id": "u-ben", "name": "Ben", "value": 0, "rank": 2 }
+      ]
+    },
+    {
+      "name": "best set of a timed exercise is its longest hold",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "bestSet", "exerciseId": "plank", "period": "month" },
+      "members": [
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [{ "day": "2026-10-03", "reps": 0, "sets": 1, "bestSetReps": 0, "holdSeconds": 60, "byExercise": { "plank": { "sets": 1, "holdSeconds": 60, "bestHoldSeconds": 60 } } }]
+        },
+        {
+          "id": "u-ben",
+          "name": "Ben",
+          "timeZone": "America/Denver",
+          "days": [{ "day": "2026-10-06", "reps": 0, "sets": 2, "bestSetReps": 0, "holdSeconds": 150, "byExercise": { "plank": { "sets": 2, "holdSeconds": 150, "bestHoldSeconds": 90 } } }]
+        }
+      ],
+      "rows": [
+        { "id": "u-ben", "name": "Ben", "value": 90, "rank": 1 },
+        { "id": "u-ana", "name": "Ana", "value": 60, "rank": 2 }
+      ]
+    },
+    {
+      "name": "a challenge window: fixed days whatever the zone, and the group total toward the target",
+      "now": "2026-10-20T12:00:00-06:00",
+      "spec": { "metric": "count", "exerciseId": "x-k3p9abcdefghijkl", "period": { "fromDay": "2026-10-01", "toDay": "2026-10-31" } },
+      "members": [
+        {
+          "id": "u-ana",
+          "name": "Ana",
+          "timeZone": "America/Denver",
+          "days": [
+            { "day": "2026-09-30", "reps": 0, "sets": 9, "bestSetReps": 0, "holdSeconds": 0, "byExercise": { "x-k3p9abcdefghijkl": { "sets": 9, "reps": 9, "bestSetReps": 1 } } },
+            { "day": "2026-10-01", "reps": 0, "sets": 3, "bestSetReps": 0, "holdSeconds": 0, "byExercise": { "x-k3p9abcdefghijkl": { "sets": 3, "reps": 3, "bestSetReps": 1 } } },
+            { "day": "2026-10-10", "reps": 20, "sets": 7, "bestSetReps": 10, "holdSeconds": 0, "byExercise": { "x-k3p9abcdefghijkl": { "sets": 5, "reps": 5, "bestSetReps": 1 }, "pull-up": { "sets": 2, "reps": 20, "bestSetReps": 10 } } }
+          ]
+        },
+        { "id": "u-ben", "name": "Ben", "timeZone": "America/Denver", "days": [{ "day": "2026-10-12", "reps": 30, "sets": 3, "bestSetReps": 10 }] },
+        {
+          "id": "u-kiri",
+          "name": "Kiri",
+          "timeZone": "Pacific/Auckland",
+          "days": [
+            { "day": "2026-10-31", "reps": 0, "sets": 4, "bestSetReps": 0, "holdSeconds": 0, "byExercise": { "x-k3p9abcdefghijkl": { "sets": 4, "reps": 4, "bestSetReps": 1 } } },
+            { "day": "2026-11-01", "reps": 0, "sets": 6, "bestSetReps": 0, "holdSeconds": 0, "byExercise": { "x-k3p9abcdefghijkl": { "sets": 6, "reps": 6, "bestSetReps": 1 } } }
+          ]
+        }
+      ],
+      "rows": [
+        { "id": "u-ana", "name": "Ana", "value": 8, "rank": 1 },
+        { "id": "u-kiri", "name": "Kiri", "value": 4, "rank": 2 },
+        { "id": "u-ben", "name": "Ben", "value": 0, "rank": 3 }
+      ],
+      "groupTotal": 12
+    },
+    {
+      "name": "an empty board",
+      "now": "2026-10-14T12:00:00-06:00",
+      "spec": { "metric": "count", "exerciseId": "pull-up", "period": { "fromDay": "2026-10-01", "toDay": "2026-10-31" } },
+      "members": [],
+      "rows": [],
+      "groupTotal": 0
+    }
+  ]
+}

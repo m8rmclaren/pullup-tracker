@@ -221,6 +221,14 @@ export class DynamoDb implements Db {
     return response.Item ? itemToDayTotal(response.Item) : null;
   }
 
+  async dayTotalsBetween(userId: string, fromDay: string, toDay: string) {
+    const items = await this.queryAll({
+      KeyConditionExpression: 'pk = :pk AND sk BETWEEN :fromSk AND :toSk',
+      ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':fromSk': DAY_SK_PREFIX + fromDay, ':toSk': DAY_SK_PREFIX + toDay },
+    });
+    return items.map(itemToDayTotal);
+  }
+
   async putDayTotal(userId: string, dayTotal: StoredDayTotal, expectedVersion: number | null) {
     const Item = { pk: userPartitionKey(userId), sk: DAY_SK_PREFIX + dayTotal.day, userId, ...dayTotal, monthPk: `M#${dayTotal.day.slice(0, 7)}`, monthSk: `${dayTotal.day}#${userId}` };
     await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
@@ -288,6 +296,7 @@ export class DynamoDb implements Db {
       const item = response.Attributes!;
       const challenge: PendingChallenge = { purpose: item.purpose as PendingChallenge['purpose'], expiresAt: item.expiresAt as number };
       for (const field of ['userId', 'name', 'timeZone', 'linkCodeHash'] as const) if (item[field] !== undefined) challenge[field] = item[field] as string;
+      if (item.dailyGoalReps !== undefined) challenge.dailyGoalReps = item.dailyGoalReps as number;
       return challenge;
     } catch (error) {
       if (error instanceof ConditionalCheckFailedException) return null;

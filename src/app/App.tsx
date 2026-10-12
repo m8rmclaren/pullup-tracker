@@ -3,6 +3,7 @@ import type { Entry } from '../shared/model';
 import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
 import { parseDeviceLink, parseJoinLink } from './api';
+import { ProfileSheet } from './Board';
 import { FriendsTab, LinkSheet } from './Friends';
 import { describeSet, unitLookup } from './labels';
 import { useNow, useTracker } from './hooks';
@@ -19,6 +20,7 @@ type SheetState =
   | { kind: 'weight' }
   | { kind: 'device'; code: string }
   | { kind: 'link'; code: string }
+  | { kind: 'profile'; userId: string }
   | null;
 
 interface Toast {
@@ -106,7 +108,7 @@ export function App({ tracker }: { tracker: Tracker }) {
         ) : tab === 'trends' ? (
           <Trends entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
         ) : (
-          <FriendsTab tracker={tracker} onOpenSettings={() => setSheet({ kind: 'settings' })} />
+          <FriendsTab tracker={tracker} onOpenSettings={() => setSheet({ kind: 'settings' })} onOpenProfile={(userId) => setSheet({ kind: 'profile', userId })} />
         )}
       </main>
 
@@ -168,6 +170,7 @@ export function App({ tracker }: { tracker: Tracker }) {
       ) : null}
       {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={closeSheet} onOpenLink={(link) => setSheet(link)} /> : null}
       {sheet?.kind === 'device' ? <DeviceLinkSheet tracker={tracker} code={sheet.code} onClose={closeSheet} /> : null}
+      {sheet?.kind === 'profile' ? <ProfileSheet tracker={tracker} userId={sheet.userId} onClose={closeSheet} /> : null}
       {sheet?.kind === 'link' ? (
         <LinkSheet
           tracker={tracker}
