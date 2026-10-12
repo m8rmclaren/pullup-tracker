@@ -4,7 +4,7 @@ import { type Entry, type InviteKind, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MA
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallClockToEpochMs } from '../shared/time';
 import { createInvite, inviteLink, join, parseInviteLink } from './api';
-import { exerciseLabel, formatAmount, formatHoldSeconds } from './labels';
+import { exerciseLabel, formatAmount, formatHoldSeconds, unitLookup } from './labels';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
 
@@ -162,7 +162,7 @@ export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeigh
   };
 
   return (
-    <Sheet title={entry ? `Edit set${exerciseLabel(entry) ? ` · ${exerciseLabel(entry)}` : ''}` : 'Log a set'} onClose={onClose}>
+    <Sheet title={entry ? `Edit set${exerciseLabel(entry, tracker) ? ` · ${exerciseLabel(entry, tracker)}` : ''}` : 'Log a set'} onClose={onClose}>
       {isHold ? <Stepper value={amount} onChange={setAmount} min={MIN_HOLD_SECONDS} max={MAX_HOLD_SECONDS} label="Seconds" format={formatHoldSeconds} /> : <Stepper value={amount} onChange={setAmount} label="Reps" />}
       <div class="chips" role="group" aria-label={isHold ? 'Common hold times' : 'Common rep counts'}>
         {(isHold ? HOLD_CHIPS_SECONDS : REP_CHIPS).map((chipAmount) => (
@@ -218,7 +218,7 @@ export function DaySheet({ tracker, day, timeZone, goal, onClose, onEdit, onAdd 
     .allEntries()
     .filter((entry) => !entry.deleted && dayKey(entry.doneAt, timeZone) === day)
     .sort((a, b) => a.doneAt - b.doneAt);
-  const dayTotal = dailyTotals(daySets, timeZone).get(day);
+  const dayTotal = dailyTotals(daySets, timeZone, unitLookup(tracker)).get(day);
   return (
     <Sheet title={formatDay(day, { weekday: true, year: true })} onClose={onClose}>
       <p class="day-sum">
@@ -232,8 +232,8 @@ export function DaySheet({ tracker, day, timeZone, goal, onClose, onEdit, onAdd 
               <button type="button" class="set-row" onClick={() => onEdit(entry)}>
                 <span class="set-row__time">{formatClock(entry.doneAt, timeZone)}</span>
                 <span class="set-row__reps">
-                  {formatAmount(entry)}
-                  {exerciseLabel(entry) ? <em class="set-row__exercise">{exerciseLabel(entry)}</em> : null}
+                  {formatAmount(entry, tracker)}
+                  {exerciseLabel(entry, tracker) ? <em class="set-row__exercise">{exerciseLabel(entry, tracker)}</em> : null}
                   {entry.addedWeightLbs ? <em class="set-row__lbs">{formatAddedWeight(entry.addedWeightLbs)}</em> : null}
                 </span>
                 <span class="set-row__edit muted">Edit</span>

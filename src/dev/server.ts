@@ -27,13 +27,23 @@ class DiskDb extends MemoryDb {
     this.users = new Map(snapshot.users as never);
     this.tokens = new Map(snapshot.tokens as never);
     this.invites = new Map(snapshot.invites as never);
+    this.definitions = new Map(snapshot.definitions as never);
+    this.adoptions = nested(snapshot.adoptions);
   }
   save() {
     const flat = <V>(byUser: Map<string, Map<string, V>>) => [...byUser].map(([userId, rows]) => [userId, [...rows]]);
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(
       dbFile,
-      JSON.stringify({ entries: flat(this.entries), dayTotals: flat(this.dayTotals), users: [...this.users], tokens: [...this.tokens], invites: [...this.invites] }),
+      JSON.stringify({
+        entries: flat(this.entries),
+        dayTotals: flat(this.dayTotals),
+        users: [...this.users],
+        tokens: [...this.tokens],
+        invites: [...this.invites],
+        definitions: [...this.definitions],
+        adoptions: flat(this.adoptions),
+      }),
     );
   }
 }

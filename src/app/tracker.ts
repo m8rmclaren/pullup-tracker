@@ -1,4 +1,6 @@
 import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
+import { type Measure, builtInExercise, builtInVariation } from '../shared/catalog';
+import { type Definition, type ExerciseDefinition, MAX_PUSHED_DEFINITIONS, type VariationDefinition, definitionKeyOf, definitionKeyString, isVariationDefinition, mergeDefinitionsInto } from '../shared/definitions';
 import { DEFAULT_TIME_ZONE } from '../shared/time';
 
 export interface Settings {
@@ -49,6 +51,17 @@ interface PersistedState {
   account: Account | null;
   settings: Settings;
   lastSyncAt: number | null;
+  /** Absent in state saved before definitions existed. */
+  definitions?: Definition[];
+  /** Keys (definitionKeyString) of definitions created or edited here and not yet acknowledged. */
+  definitionOutbox?: string[];
+}
+
+/** What the UI needs to show an exercise, built-in or created. */
+export interface ExerciseInfo {
+  name: string;
+  measure: Measure;
+  unit?: string;
 }
 
 const STORAGE_KEY = 'pullups:v1';
@@ -57,6 +70,7 @@ const DEFAULT_SETTINGS: Settings = { token: '', goal: DEFAULT_GOAL, padAddedWeig
 /** Taps within this window are batched into one request. */
 export const SYNC_DEBOUNCE_MS = 1200;
 const MAX_BACKOFF_MS = 5 * 60_000;
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
 /**
  * The local replica. Every mutation lands here synchronously (so the UI never waits on
@@ -66,6 +80,8 @@ const MAX_BACKOFF_MS = 5 * 60_000;
 export class Tracker {
   private entries = new Map<string, Entry>();
   private outbox = new Set<string>();
+  private definitions = new Map<string, Definition>();
+  private definitionOutbox = new Set<string>();
   private cursor = 0;
   /** Who this device is signed in as, from the last sync or join. */
   account: Account | null = null;
@@ -118,14 +134,76 @@ export class Tracker {
   }
 
   pendingCount(): number {
-    return this.outbox.size;
+    return this.outbox.size + this.definitionOutbox.size;
   }
 
+  allDefinitions(): Definition[] {
+    return [...this.definitions.values()];
+  }
+
+  /** A built-in or created exercise; undefined until an unknown created one arrives in a sync. */
+  exercise(exerciseId: string): ExerciseInfo | undefined {
+    return builtInExercise(exerciseId) ?? (this.definitions.get(exerciseId) as ExerciseDefinition | undefined);
+  }
+
+  variationName(exerciseId: string, variationId: string): string | undefined {
+    return builtInVariation(variationId)?.name ?? this.definitions.get(definitionKeyString({ exerciseId, variationId }))?.name;
+  }
+
+  /** Makes an exercise usable at once, offline too; it reaches the server with the next sync. */
+  createExercise(fields: { name: string; measure: Measure; unit?: string; description?: string }): ExerciseDefinition {
+    const nowMs = this.now();
+    const exercise: ExerciseDefinition = { id: `x-${this.newDefinitionSuffix()}`, name: fields.name, measure: fields.measure, createdAt: nowMs, updatedAt: nowMs };
+    if (fields.measure === 'count') exercise.unit = fields.unit;
+    if (fields.description) exercise.description = fields.description;
+    this.writeDefinition(exercise);
+    return exercise;
+  }
+
+  createVariation(exerciseId: string, name: string): VariationDefinition {
+    const nowMs = this.now();
+    const variation: VariationDefinition = { id: `v-${this.newDefinitionSuffix()}`, exerciseId, name, createdAt: nowMs, updatedAt: nowMs };
+    this.writeDefinition(variation);
+    return variation;
+  }
+
+  /** Renames or redescribes a definition this account created. Measure and unit never change. */
+  editDefinition(definition: Definition, patch: { name?: string; description?: string }): Definition {
+    const edited = { ...definition, name: patch.name ?? definition.name, updatedAt: Math.max(this.now(), definition.updatedAt + 1) };
+    if (!isVariationDefinition(edited) && patch.description !== undefined) edited.description = patch.description || undefined;
+    this.writeDefinition(edited);
+    return edited;
+  }
+
+  /** Random lowercase base32, the alphabet created ids are checked against. */
+  private newDefinitionSuffix(): string {
+    return [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => BASE32_ALPHABET[byte & 31]).join('');
+  }
+
+  private writeDefinition(definition: Definition): void {
+    const keyString = definitionKeyString(definitionKeyOf(definition));
+    this.definitions.delete(keyString);
+    mergeDefinitionsInto(this.definitions, [definition]);
+    this.definitionOutbox.add(keyString);
+    this.persist();
+    if (this.status === 'synced') this.status = 'pending';
+    this.notifyListeners();
+    this.scheduleSync();
+  }
+
+  /** A pull-up, the pad's one exercise. */
   add(reps: number, doneAt = this.now(), addedWeightLbs = 0): Entry {
-    const entry: Entry = { id: this.newId(), doneAt, reps: clampReps(reps), updatedAt: this.now() };
-    if (clampAddedWeight(addedWeightLbs)) entry.addedWeightLbs = clampAddedWeight(addedWeightLbs);
-    this.write(entry);
-    return entry;
+    return this.log({ reps, doneAt, addedWeightLbs });
+  }
+
+  /** Logs one set of any exercise: `reps` for a counted one, `holdSeconds` for a timed one. */
+  log(set: { exerciseId?: string; variationIds?: string[]; reps?: number; holdSeconds?: number; doneAt?: number; addedWeightLbs?: number }): Entry {
+    const entry = { id: this.newId(), doneAt: set.doneAt ?? this.now(), updatedAt: this.now(), exerciseId: set.exerciseId, variationIds: set.variationIds, addedWeightLbs: clampAddedWeight(set.addedWeightLbs ?? 0) } as Entry;
+    if (set.holdSeconds !== undefined) entry.holdSeconds = clampHoldSeconds(set.holdSeconds);
+    else entry.reps = clampReps(set.reps ?? MIN_REPS);
+    const normalized = normalizeEntry(entry);
+    this.write(normalized);
+    return normalized;
   }
 
   /**
@@ -232,11 +310,17 @@ export class Tracker {
     }
     const pushedIds = [...this.outbox].slice(0, MAX_PUSHED_ENTRIES);
     const sentUpdatedAtById = new Map(pushedIds.map((id) => [id, this.entries.get(id)!.updatedAt]));
+    const pushedDefinitionKeys = [...this.definitionOutbox].slice(0, MAX_PUSHED_DEFINITIONS);
+    const sentUpdatedAtByDefinitionKey = new Map(pushedDefinitionKeys.map((keyString) => [keyString, this.definitions.get(keyString)!.updatedAt]));
     this.setStatus('syncing');
     try {
       const token = this.settings.token;
-      const response = await this.deps.transport({ protocolVersion: PROTOCOL_VERSION, pushedEntries: pushedIds.map((id) => this.entries.get(id)!), sinceCursor: this.cursor }, token);
+      const response = await this.deps.transport(
+        { protocolVersion: PROTOCOL_VERSION, pushedEntries: pushedIds.map((id) => this.entries.get(id)!), pushedDefinitions: pushedDefinitionKeys.map((keyString) => this.definitions.get(keyString)!), sinceCursor: this.cursor },
+        token,
+      );
       mergeInto(this.entries, response.entries);
+      mergeDefinitionsInto(this.definitions, response.definitions ?? []);
       // The token changed mid-request: this cursor belongs to the old account.
       if (this.settings.token === token) {
         this.cursor = response.cursor;
@@ -244,13 +328,14 @@ export class Tracker {
       }
       // An entry edited again while the request was in flight stays queued.
       for (const [id, sentUpdatedAt] of sentUpdatedAtById) if (this.entries.get(id)?.updatedAt === sentUpdatedAt) this.outbox.delete(id);
+      for (const [keyString, sentUpdatedAt] of sentUpdatedAtByDefinitionKey) if (this.definitions.get(keyString)?.updatedAt === sentUpdatedAt) this.definitionOutbox.delete(keyString);
       this.consecutiveFailures = 0;
       this.lastError = null;
       this.lastSyncAt = this.now();
       this.persist();
       this.status = this.idleStatus();
       this.notifyListeners();
-      if (this.outbox.size > 0) this.isRerunQueued = true;
+      if (this.pendingCount() > 0) this.isRerunQueued = true;
     } catch (error) {
       if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
         this.lastError = error.status === 401 ? 'This device was signed out. Open a new device link to sign back in.' : 'Forbidden by CloudFront — check the deploy.';
@@ -280,7 +365,7 @@ export class Tracker {
 
   private idleStatus(): SyncStatus {
     if (!this.settings.token) return 'unconfigured';
-    return this.outbox.size > 0 ? 'pending' : 'synced';
+    return this.pendingCount() > 0 ? 'pending' : 'synced';
   }
 
   private setStatus(status: SyncStatus): void {
@@ -303,6 +388,8 @@ export class Tracker {
       this.account = persisted.account ?? null;
       this.settings = Object.assign({ ...DEFAULT_SETTINGS }, persisted.settings);
       this.lastSyncAt = persisted.lastSyncAt ?? null;
+      mergeDefinitionsInto(this.definitions, persisted.definitions ?? []);
+      this.definitionOutbox = new Set((persisted.definitionOutbox ?? []).filter((keyString) => this.definitions.has(keyString)));
     } catch {
       // A corrupt blob is not worth crashing over; the server copy repopulates on next sync.
     }
@@ -317,6 +404,8 @@ export class Tracker {
       account: this.account,
       settings: this.settings,
       lastSyncAt: this.lastSyncAt,
+      definitions: [...this.definitions.values()],
+      definitionOutbox: [...this.definitionOutbox],
     };
     this.deps.storage.setItem(STORAGE_KEY, JSON.stringify(state));
   }

@@ -108,7 +108,21 @@ variation is at most one per group.
   "into tuck" on a muscle-up can sit alongside "wide grip".
 - **The server checks shape only**: name 1–60 printable characters, unit 1–20, description
   up to 280, measure one of `count` or `time`. It does not judge whether an exercise is
-  real, sensible or a duplicate.
+  real, sensible or a duplicate. Text must already be trimmed and free of control and
+  format characters (`validation.json`), so clients clean it before saving.
+- **The server stamps `createdBy`** from the account that first pushes the id; a
+  client-sent `createdBy` is ignored. A later push by anyone else, or one that changes
+  `measure`, `unit` or a variation's `exerciseId`, is **dropped and logged rather than
+  rejected**, so one bad definition can't wedge the rest of a client's outbox.
+- **A set's measure must match its created exercise** (`reps` for `count`, `holdSeconds`
+  for `time`), checked after the push's definitions are merged. A set that logs to an
+  unknown created id is accepted, so no write is ever lost to ordering.
+- **Your adopted list** is what every sync returns: one `U#<userId> A#<key>` item per
+  definition you created or have logged to (see New items). Creating a definition adopts
+  it in the same transaction; pushing a set that logs to someone else's adopts it then.
+  M1's challenge join and M2's Add to mine will write the same item. Each sync returns
+  every adopted definition, so a rename reaches every device on its next sync, at the
+  cost of one query and one batch get per sync.
 - **Duplicates are reduced, not prevented.** The picker and the composer search your
   exercises, your friends' and the built-ins before offering "new". Friends who adopt each
   other's exercises share one id. Merging two created exercises (an `aliasOf` pointer) is
@@ -280,6 +294,7 @@ candidates in M0, while the data is one user's.
 | `U#<userId>` | `R#<fromUserId>` | incoming friend request: createdAt, challengeId, declinedAt? |
 | `U#<userId>` | `S#<toUserId>` | the same request from the sender's side, written in the same transaction |
 | `U#<userId>` | `RQ#<day>` | friend requests sent that day, with `ttlEpochSeconds` |
+| `U#<userId>` | `A#<key>` | adopted definition: `adoptedAt`. `key` is `<exerciseId>` for an exercise or `<exerciseId>/<variationId>` for a variation (the variation's id alone doesn't say where it's stored). |
 | `X#<exerciseId>` | `X` | created exercise |
 | `X#<exerciseId>` | `V#<variationId>` | created variation on that exercise (built-in exercises too: `X#pull-up V#v-…`) |
 | `C#<digest>` | `C` | pending WebAuthn challenge: purpose, userId?, name?, expiresAt, ttlEpochSeconds |
@@ -312,8 +327,9 @@ worker loads the new code on its next launch.
 - Request: `{ protocolVersion, pushedEntries, pushedDefinitions, sinceCursor }`.
   `pushedDefinitions` holds created exercises and variations, each merged last-writer-wins
   and rejected if a non-creator tries to change one.
-- Response: as today, plus `definitions` for every created id referenced by the returned
-  entries or by your adopted list. `account` gains the new profile fields and
+- Response: as today, plus `definitions`: every definition on your adopted list, plus any
+  created id the returned entries reference. Exercises and variations share the array; the
+  `x-`/`v-` prefix says which is which. `account` gains the new profile fields and
   `incomingRequests: [{ id, name, challengeId }]`, without tombstones.
 
 **`POST /api/profile`**: `{ name?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,

@@ -91,7 +91,7 @@ function withoutServerFields({ serverWrittenAt: _, ...entry }: StoredEntry): Ent
   return entry;
 }
 
-export async function syncEntries(db: Db, userId: string, timeZone: string, pushedEntries: Entry[], sinceCursor: number, clock: Clock = { now: Date.now }): Promise<Omit<SyncResponse, 'account'>> {
+export async function syncEntries(db: Db, userId: string, timeZone: string, pushedEntries: Entry[], sinceCursor: number, clock: Clock = { now: Date.now }): Promise<Omit<SyncResponse, 'account' | 'definitions'>> {
   // One device can't send two versions of an entry, but a hand-edited import could.
   const incoming = new Map<string, Entry>();
   for (const entry of pushedEntries) {

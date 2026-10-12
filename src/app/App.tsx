@@ -3,7 +3,7 @@ import type { Entry } from '../shared/model';
 import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
 import { parseInviteLink } from './api';
-import { describeSet } from './labels';
+import { describeSet, unitLookup } from './labels';
 import { useNow, useTracker } from './hooks';
 import { DaySheet, EntrySheet, JoinSheet, PadWeightSheet, type PendingInvite, SettingsSheet } from './sheets';
 import { Today } from './Today';
@@ -45,7 +45,7 @@ export function App({ tracker }: { tracker: Tracker }) {
 
   const entries = useMemo(() => tracker.allEntries(), [tracker, version]);
   const goal = tracker.settings.goal;
-  const stats = useMemo(() => computeStats(entries, now, goal, timeZone), [entries, now, goal, timeZone]);
+  const stats = useMemo(() => computeStats(entries, now, goal, timeZone, unitLookup(tracker)), [entries, now, goal, timeZone, tracker, version]);
   const usualSetReps = useMemo(() => usualReps(entries, now, timeZone), [entries, now, timeZone]);
 
   const showToast = useCallback((text: string, undo: () => void) => {
@@ -59,11 +59,11 @@ export function App({ tracker }: { tracker: Tracker }) {
     (entry: Entry) => {
       const timeZone = tracker.timeZone();
       const dayLabel = dayKey(entry.doneAt, timeZone) === dayKey(Date.now(), timeZone) ? '' : ` on ${formatDay(dayKey(entry.doneAt, timeZone))}`;
-      showToast(`Logged ${describeSet(entry)}${dayLabel}`, () => tracker.remove(entry.id));
+      showToast(`Logged ${describeSet(entry, tracker)}${dayLabel}`, () => tracker.remove(entry.id));
     },
     [tracker, showToast],
   );
-  const onDeleted = useCallback((entry: Entry) => showToast(`Deleted set of ${describeSet(entry)}`, () => tracker.restore(entry.id)), [tracker, showToast]);
+  const onDeleted = useCallback((entry: Entry) => showToast(`Deleted set of ${describeSet(entry, tracker)}`, () => tracker.restore(entry.id)), [tracker, showToast]);
   const closeSheet = useCallback(() => setSheet(null), []);
 
   useEffect(() => {
@@ -101,7 +101,7 @@ export function App({ tracker }: { tracker: Tracker }) {
             onOpenPadWeight={() => setSheet({ kind: 'weight' })}
           />
         ) : (
-          <Trends entries={entries} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
+          <Trends entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
         )}
       </main>
 
