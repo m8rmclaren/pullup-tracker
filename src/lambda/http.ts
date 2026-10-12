@@ -1,8 +1,10 @@
-import { type Entry, type InviteRequest, MAX_PUSHED_ENTRIES, PROTOCOL_VERSION, isValidEntry } from '../shared/model';
+import { type Entry, MAX_PUSHED_ENTRIES, PROTOCOL_VERSION, isValidEntry } from '../shared/model';
 import { isValidProfilePatch } from '../shared/profile';
 import { type Definition, MAX_PUSHED_DEFINITIONS, isValidDefinition } from '../shared/definitions';
-import { createInvite, redeemInvite } from './accounts';
+import { createDeviceLink, redeemDeviceLink } from './accounts';
 import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
+import { RequestError } from './errors';
+import { type WebAuthnConfig, finishLogin, finishRegister, finishSignup, listPasskeys, startLogin, startRegister, startSignup } from './passkeys';
 import { accountOf, updateProfile } from './profile';
 import { hashToken, isPlausibleSecret } from './auth';
 import type { Db } from './db';
@@ -25,37 +27,64 @@ export interface RouteDeps {
   /** Defaults to db.userIdForToken; the Lambda wraps it in a short cache. */
   userIdForToken?: (tokenHash: string) => Promise<string | null>;
   clock?: Clock;
+  /** Absent where no domain is configured: passkeys are bound to one, so they are off. */
+  webAuthn?: WebAuthnConfig;
+  /** New accounts can be made only when this is true. Signing in and adding passkeys work either way. */
+  isSignupOpen?: boolean;
 }
 
+type Handler = (body: Record<string, unknown>) => Promise<HttpResponse>;
+
 const errorResponse = (status: number, error: string): HttpResponse => ({ status, body: { error } });
+const ok = (body: unknown): HttpResponse => ({ status: 200, body });
 
 export async function route(request: HttpRequest, deps: RouteDeps): Promise<HttpResponse> {
-  const handlers: Record<string, (body: Record<string, unknown>) => Promise<HttpResponse>> = {
+  const clock = clockFrom(deps);
+  const signedIn =
+    (handle: (userId: string, body: Record<string, unknown>) => Promise<HttpResponse>): Handler =>
+    async (body) => {
+      const userId = await authenticate(request, deps);
+      return userId ? handle(userId, body) : errorResponse(401, 'This device is signed out.');
+    };
+  const webAuthn = (): WebAuthnConfig => {
+    if (!deps.webAuthn) throw new RequestError(503, "Passkeys aren't set up on this server.");
+    return deps.webAuthn;
+  };
+  const signupOpen = () => {
+    if (!deps.isSignupOpen) throw new RequestError(403, "Sign-up isn't open yet.");
+  };
+
+  const handlers: Record<string, Handler> = {
     '/api/sync': async (body) => {
       if (body.protocolVersion !== PROTOCOL_VERSION) return { status: 426, body: { error: 'Update the app to keep syncing.', protocolVersion: PROTOCOL_VERSION } };
-      const userId = await authenticate(request, deps);
-      if (!userId) return errorResponse(401, 'This device is signed out.');
-      return sync(userId, body, deps);
+      return signedIn((userId) => sync(userId, body, deps))(body);
     },
-    '/api/invite': async (body) => {
-      const userId = await authenticate(request, deps);
-      if (!userId) return errorResponse(401, 'This device is signed out.');
-      const kind = (body as Partial<InviteRequest>).kind;
-      if (kind !== 'friend' && kind !== 'device') return errorResponse(400, 'kind must be friend or device');
-      return { status: 200, body: await createInvite(deps.db, userId, kind, clockFrom(deps)) };
-    },
-    '/api/profile': async (body) => {
-      const userId = await authenticate(request, deps);
-      if (!userId) return errorResponse(401, 'This device is signed out.');
+    '/api/invite': signedIn(async (userId, body) => {
+      if (body.kind !== 'device') return errorResponse(400, 'kind must be device');
+      return ok(await createDeviceLink(deps.db, userId, clock));
+    }),
+    '/api/profile': signedIn(async (userId, body) => {
       if (!isValidProfilePatch(body)) return errorResponse(400, 'Each of name, timeZone and dailyGoalReps needs its updatedAt clock, and a valid value.');
-      const user = await updateProfile(deps.db, userId, body, clockFrom(deps));
-      return user ? { status: 200, body: accountOf(user) } : errorResponse(401, 'This account no longer exists.');
-    },
+      const user = await updateProfile(deps.db, userId, body, clock);
+      return user ? ok(accountOf(user)) : errorResponse(401, 'This account no longer exists.');
+    }),
     '/api/join': async (body) => {
-      if (!isPlausibleSecret(body.code)) return errorResponse(400, 'That is not an invite link.');
-      const redeemed = await redeemInvite(deps.db, body.code, body.name, body.timeZone, clockFrom(deps));
-      return redeemed.ok ? { status: 200, body: { token: redeemed.token, account: redeemed.account } } : errorResponse(redeemed.status, redeemed.error);
+      if (!isPlausibleSecret(body.code)) return errorResponse(400, 'That is not a device link.');
+      return ok(await redeemDeviceLink(deps.db, body.code, clock));
     },
+    '/api/signup/options': async (body) => {
+      signupOpen();
+      return ok(await startSignup(deps.db, webAuthn(), body, clock));
+    },
+    '/api/signup': async (body) => {
+      signupOpen();
+      return ok(await finishSignup(deps.db, webAuthn(), body, clock));
+    },
+    '/api/passkey/login/options': async () => ok(await startLogin(deps.db, webAuthn(), clock)),
+    '/api/passkey/login': async (body) => ok(await finishLogin(deps.db, webAuthn(), body, clock)),
+    '/api/passkey/register/options': signedIn(async (userId) => ok(await startRegister(deps.db, webAuthn(), userId, clock))),
+    '/api/passkey/register': signedIn(async (userId, body) => ok(await finishRegister(deps.db, webAuthn(), userId, body, clock))),
+    '/api/passkey/list': signedIn(async (userId) => ok({ passkeys: await listPasskeys(deps.db, userId) })),
   };
 
   const handler = handlers[request.path];
@@ -68,7 +97,12 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
     return errorResponse(400, 'body is not JSON');
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return errorResponse(400, 'body must be a JSON object');
-  return handler(parsed as Record<string, unknown>);
+  try {
+    return await handler(parsed as Record<string, unknown>);
+  } catch (error) {
+    if (error instanceof RequestError) return errorResponse(error.status, error.message);
+    throw error;
+  }
 }
 
 const clockFrom = (deps: RouteDeps): Clock => deps.clock ?? { now: Date.now };

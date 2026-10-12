@@ -1,7 +1,7 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { BatchGetCommand, type BatchGetCommandOutput, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, type BatchGetCommandOutput, DeleteCommand, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
-import { type Db, type StoredDayTotal, type Invite, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type Db, type Invite, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
@@ -10,9 +10,14 @@ import { type Db, type StoredDayTotal, type Invite, type StoredDefinition, type 
 //                           (LSIs `by-server-written-at` and `by-done-at` index these)
 //   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, holdSeconds, byExercise (map), version, userId;
 //                           monthPk/monthSk feed GSI `by-month`. Totals written before v2 lack holdSeconds and byExercise.
-//   T#<hash>    T           device token: userId, createdAt
+//   T#<hash>    T           device (session) token: userId, createdAt
+//   U#<userId>  T#<hash>    the same token from the user's side, so an account's tokens can be found: createdAt
+//                           (tokens issued before passkeys have no such item)
+//   U#<userId>  K#<credId>  passkey: credentialId, publicKey (COSE, base64url), counter, transports?, createdAt, label?
 //   U#<userId>  A#<key>     adopted definition (key is definitionKeyString: `x-…` or `<exerciseId>/v-…`): adoptedAt
 //   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
+//   C#<hash>    C           pending WebAuthn challenge: purpose, userId?, name?, timeZone?, expiresAt, ttlEpochSeconds
+//   W#<day>     U#<userId>  the empty-account sweep looks at this account on <day>
 //   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
 //   X#<exId>    V#<varId>   created variation on that exercise, built-in or created: id, exerciseId, name, createdBy?, createdAt, updatedAt, version
 // Only entries carry `serverWrittenAt` and `doneAt`, and only day totals carry `monthPk`, so every index is sparse.
@@ -21,6 +26,17 @@ const userPartitionKey = (userId: string) => `U#${userId}`;
 const ENTRY_SK_PREFIX = 'E#';
 const DAY_SK_PREFIX = 'D#';
 const ADOPTED_SK_PREFIX = 'A#';
+const PASSKEY_SK_PREFIX = 'K#';
+const TOKEN_SK_PREFIX = 'T#';
+
+type TransactItems = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']>;
+
+function itemToPasskey(item: Record<string, unknown>): Passkey {
+  const passkey: Passkey = { credentialId: item.credentialId as string, publicKey: item.publicKey as string, counter: item.counter as number, createdAt: item.createdAt as number };
+  if (item.transports) passkey.transports = item.transports as string[];
+  if (item.label) passkey.label = item.label as string;
+  return passkey;
+}
 
 function definitionItemKey(key: DefinitionKey) {
   return { pk: `X#${key.exerciseId}`, sk: key.variationId ? `V#${key.variationId}` : 'X' };
@@ -66,6 +82,9 @@ function versionCondition(attributeName: string, expectedValue: number | null) {
     ? { ConditionExpression: 'attribute_not_exists(pk)' }
     : { ConditionExpression: '#version = :expected', ExpressionAttributeNames: { '#version': attributeName }, ExpressionAttributeValues: { ':expected': expectedValue } };
 }
+
+// Every optional attribute of the profile item. putProfile replaces the whole item, so one missing here would be erased by the next edit.
+const USER_OPTIONAL_FIELDS = ['nameUpdatedAt', 'timeZone', 'zoneUpdatedAt', 'dailyGoalReps', 'goalUpdatedAt', 'version'] as const;
 
 export class DynamoDb implements Db {
   constructor(
@@ -192,7 +211,7 @@ export class DynamoDb implements Db {
     const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'P' }, ConsistentRead: true }));
     if (!response.Item) return null;
     const user: User = { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number };
-    for (const field of ['nameUpdatedAt', 'timeZone', 'zoneUpdatedAt', 'dailyGoalReps', 'goalUpdatedAt', 'version'] as const) {
+    for (const field of USER_OPTIONAL_FIELDS) {
       if (response.Item[field] !== undefined) (user as unknown as Record<string, unknown>)[field] = response.Item[field];
     }
     return user;
@@ -224,12 +243,82 @@ export class DynamoDb implements Db {
     return invite;
   }
 
-  async redeemInvite(codeHash: string, tokenHash: string, userId: string, newUser: User | null) {
-    const transactItems: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [
-      { Delete: { TableName: this.tableName, Key: { pk: `I#${codeHash}`, sk: 'I' }, ConditionExpression: 'attribute_exists(pk)' } },
-      { Put: { TableName: this.tableName, Item: { pk: `T#${tokenHash}`, sk: 'T', userId, createdAt: Date.now() }, ConditionExpression: 'attribute_not_exists(pk)' } },
+  private tokenPuts(tokenHash: string, userId: string, createdAt: number): TransactItems {
+    return [
+      { Put: { TableName: this.tableName, Item: { pk: `T#${tokenHash}`, sk: 'T', userId, createdAt }, ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: TOKEN_SK_PREFIX + tokenHash, createdAt } } },
     ];
-    if (newUser) transactItems.push({ Put: { TableName: this.tableName, Item: { pk: userPartitionKey(newUser.id), sk: 'P', ...newUser }, ConditionExpression: 'attribute_not_exists(pk)' } });
+  }
+
+  async putToken(tokenHash: string, userId: string, createdAt: number) {
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: this.tokenPuts(tokenHash, userId, createdAt) })));
+  }
+
+  async redeemInvite(codeHash: string, tokenHash: string, userId: string, createdAt: number) {
+    const transactItems: TransactItems = [{ Delete: { TableName: this.tableName, Key: { pk: `I#${codeHash}`, sk: 'I' }, ConditionExpression: 'attribute_exists(pk)' } }, ...this.tokenPuts(tokenHash, userId, createdAt)];
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
+  }
+
+  async putChallenge(challengeHash: string, challenge: PendingChallenge) {
+    await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: `C#${challengeHash}`, sk: 'C', ...challenge, ttlEpochSeconds: Math.ceil(challenge.expiresAt / 1000) } }));
+  }
+
+  async takeChallenge(challengeHash: string) {
+    try {
+      const response = await this.documentClient.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `C#${challengeHash}`, sk: 'C' }, ConditionExpression: 'attribute_exists(pk)', ReturnValues: 'ALL_OLD' }));
+      const item = response.Attributes!;
+      const challenge: PendingChallenge = { purpose: item.purpose as PendingChallenge['purpose'], expiresAt: item.expiresAt as number };
+      for (const field of ['userId', 'name', 'timeZone'] as const) if (item[field] !== undefined) challenge[field] = item[field] as string;
+      return challenge;
+    } catch (error) {
+      if (error instanceof ConditionalCheckFailedException) return null;
+      throw error;
+    }
+  }
+
+  async passkeysOf(userId: string) {
+    const passkeys: Passkey[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const response: QueryCommandOutput = await this.documentClient.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          ConsistentRead: true,
+          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+          ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': PASSKEY_SK_PREFIX },
+          ExclusiveStartKey: exclusiveStartKey,
+        }),
+      );
+      for (const item of response.Items ?? []) passkeys.push(itemToPasskey(item));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return passkeys;
+  }
+
+  async getPasskey(userId: string, credentialId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: PASSKEY_SK_PREFIX + credentialId }, ConsistentRead: true }));
+    return response.Item ? itemToPasskey(response.Item) : null;
+  }
+
+  private passkeyItem(userId: string, passkey: Passkey) {
+    return { pk: userPartitionKey(userId), sk: PASSKEY_SK_PREFIX + passkey.credentialId, ...passkey };
+  }
+
+  async addPasskey(userId: string, passkey: Passkey) {
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: this.passkeyItem(userId, passkey), ConditionExpression: 'attribute_not_exists(pk)' })));
+  }
+
+  async putPasskey(userId: string, passkey: Passkey) {
+    await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: this.passkeyItem(userId, passkey) }));
+  }
+
+  async createAccount({ user, passkey, tokenHash, sweepDay }: NewAccount) {
+    const transactItems: TransactItems = [
+      { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(user.id), sk: 'P', ...user }, ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: this.passkeyItem(user.id, passkey), ConditionExpression: 'attribute_not_exists(pk)' } },
+      ...this.tokenPuts(tokenHash, user.id, user.createdAt),
+      { Put: { TableName: this.tableName, Item: { pk: `W#${sweepDay}`, sk: userPartitionKey(user.id) } } },
+    ];
     await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
   }
 }

@@ -15,7 +15,7 @@ formats, the API, auth and the social graph. What the product does with them is 
 | Challenges | A stored group: one exercise, a window of at most 62 days, an optional target. Members see each other's totals for that exercise in that window, and nothing else. Every member has their own link. |
 | Leaderboard | Board specs `{ metric, exerciseId?, period }` evaluated by the client over raw day totals. The server never ranks. A challenge board adds the group total toward the target. |
 | Growth measurement | Per-link open and join counters, and `joinedVia` on the profile. No analytics vendor. |
-| Domain | `pullups.haydenroszell.com` for now. Move to the final domain before anyone but the operator registers a passkey. |
+| Domain | `pullups.haydenroszell.com` for now. Move to the final domain before anyone but the operator registers a passkey. Sign-up stays closed (`signup_open`) until then. |
 | Time zone | **Per user**, stored on the profile. Replaces Denver-for-everyone. |
 | Old data | A set with no `exerciseId` is a pull-up. Existing users get `America/Denver` as their zone. No migration. |
 | Old clients | `/api/sync` requires `protocolVersion: 2`. Older clients get 426 until they update. |
@@ -181,8 +181,8 @@ on it.
 - The profile gains `timeZone` (IANA name). It is set from the device at sign-up, editable
   in Settings, and existing users default to `America/Denver`, so their day keys don't move.
   The default is applied at read time: a profile with no `timeZone` means Denver, so no
-  backfill. Until passkey sign-up replaces it, `/api/join` takes the device's `timeZone`
-  for a new account (absent means Denver, for clients that predate zones).
+  backfill. Sign-up takes the device's `timeZone` for the new account (absent means
+  Denver).
 - A client that hasn't joined an account keeps days in the device's own zone. Once
   signed in, it uses the account's zone, from the sync response.
 - `time.ts` takes the zone as a parameter instead of a constant. Day-key arithmetic stays
@@ -314,6 +314,7 @@ candidates in M0, while the data is one user's.
 | pk | sk | item |
 |---|---|---|
 | `U#<userId>` | `K#<credentialId>` | passkey: public key (COSE), sign count, transports, createdAt, label |
+| `U#<userId>` | `T#<digest>` | a session token from the account's side (createdAt), written with every `T#<digest> T` since passkeys, so the sweep and revocation can find an account's tokens without a scan |
 | `U#<userId>` | `F#<friendId>` | friendship (written on both sides in one transaction): createdAt |
 | `U#<userId>` | `L` | the user's current friend-link digest, so rotating it can delete the old `I#` item. Challenge links aren't tracked here. They expire. |
 | `U#<userId>` | `Q#<day>` | compose usage counter for the day, with `ttlEpochSeconds` |
@@ -323,7 +324,8 @@ candidates in M0, while the data is one user's.
 | `U#<userId>` | `A#<key>` | adopted definition: `adoptedAt`. `key` is `<exerciseId>` for an exercise or `<exerciseId>/<variationId>` for a variation (the variation's id alone doesn't say where it's stored). |
 | `X#<exerciseId>` | `X` | created exercise |
 | `X#<exerciseId>` | `V#<variationId>` | created variation on that exercise (built-in exercises too: `X#pull-up V#v-…`) |
-| `C#<digest>` | `C` | pending WebAuthn challenge: purpose, userId?, name?, expiresAt, ttlEpochSeconds |
+| `C#<digest>` | `C` | pending WebAuthn challenge: purpose, userId?, name?, timeZone?, expiresAt, ttlEpochSeconds |
+| `W#<day>` | `U#<userId>` | the empty-account sweep looks at this account on `<day>` (UTC), 30 days after sign-up |
 | `I#<digest>` | `I` | gains the link kinds `friend` and `challenge`, with `createdBy`, the payload, `openCount`, `joinCount` and `ttlEpochSeconds` for challenges (see Links). `device` invites are unchanged. |
 | `G#<challengeId>` | `G` | challenge (see Challenges) |
 | `G#<challengeId>` | `M#<userId>` | membership: joinedAt, the member's challenge-link digest |
@@ -411,15 +413,19 @@ reveal accounts.
 → `{ draft }`. Authenticated, capped per user per day.
 
 **Sign-up and passkeys** (see Auth):
-- `POST /api/signup/options` `{ name, linkCode? }` → creation options for a fresh user id.
+- `POST /api/signup/options` `{ name, timeZone?, linkCode? }` → creation options for a fresh
+  user id. 403 while sign-up is closed.
 - `POST /api/signup` `{ credential, label }` → `{ token, account }`.
 - `POST /api/passkey/register/options` and `/api/passkey/register` (authenticated): add
-  another passkey.
+  another passkey. Register returns `{ passkeys }`.
+- `POST /api/passkey/list` (authenticated) → `{ passkeys: [{ credentialId, label?, createdAt }] }`.
 - `POST /api/passkey/login/options` → request options, with no `allowCredentials`.
 - `POST /api/passkey/login` `{ credential, label }` → `{ token, account }`.
+- Without a custom domain, every passkey endpoint answers 503.
 
-**`POST /api/join` is retired.** Device links (`/api/invite {kind:"device"}` and redeeming
-them) stay for the Watch and for recovery.
+**`POST /api/join` is retired for new accounts.** It redeems device links only
+(`/api/invite {kind:"device"}`), which stay for the Watch and for recovery; a friend invite
+from before passkeys is refused with 410.
 
 **`POST /api/account/delete`** deletes the whole `U#<userId>` partition, both sides of
 every friendship and friend request, and every challenge membership. Created exercises stay, with `createdBy` cleared, because friends' sets
@@ -437,21 +443,32 @@ with Face ID or a fingerprint. No email or password exists to collect, leak or r
 matches "no real identity": the account is a display name and a key.
 
 **Sign-up.**
-1. Enter a display name (1–40 characters, not unique, editable later).
-2. `/api/signup/options` makes a user id and a challenge that remembers the name and the
-   link code, if any.
+1. Enter a display name (1–24 characters, not unique, editable later). 24, not more, because
+   names sit in narrow board rows, and it is the limit names already had.
+2. `/api/signup/options` makes a user id and a challenge that remembers the name, the
+   device's zone and the link code, if any.
 3. The device creates a passkey. `/api/signup` verifies it, then writes the profile (with
    `joinedVia`), the passkey and the session token in one transaction. If a link came with
    it, the same transaction redeems it: the friendship, the adopted exercise, `joinCount`.
 
 No account exists without a passkey, so there's no half-made state to nag about.
 
+**Sign-up is closed** unless the deployment sets `signup_open` (the `SIGNUP_OPEN` repository
+variable). Signing in, adding a passkey to an existing account and redeeming a device link
+work either way. That is what keeps the domain rule below: until the final domain is in
+place, only the operator, whose account predates passkeys, registers one.
+
 **Signing in anywhere.** Tap **Sign in**, then Face ID. The system offers the discoverable
 passkey for the domain, and `/api/passkey/login` mints a session token for this device.
 There's no username field.
 
-**Sessions.** The existing `T#<digest>` device tokens are reused as session tokens.
+**Sessions.** The existing `T#<digest>` device tokens are reused as session tokens. Each
+new one also gets a `U#<userId> T#<digest>` item, so an account's tokens can be found.
 Revocation (`invite.sh revoke`) also deletes the user's `K#` items.
+
+**Signing in as another account** on a device drops the synced sets and definitions of the
+account it was signed into, keeping only work not yet synced, so one account's history never
+shows in (or gets edited into) another.
 
 **Recovery.** No email means no "forgot password". Passkeys sync, so losing one device loses
 nothing. Someone who loses every device *and* their password manager can get a device link

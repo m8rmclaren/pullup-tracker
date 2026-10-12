@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DynamoDb } from './dynamodb';
 import { route } from './http';
+import type { WebAuthnConfig } from './passkeys';
 
 // Lambda Function URL (payload v2) shapes, narrowed to what is read here.
 interface FunctionUrlEvent {
@@ -13,6 +14,9 @@ interface FunctionUrlEvent {
 }
 
 const db = new DynamoDb(DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } }), process.env.TABLE!);
+// Set from the custom domain in infra/main.tf; without one, passkeys stay off rather than bind to a cloudfront.net name.
+const webAuthn: WebAuthnConfig | undefined = process.env.RP_ID && process.env.APP_ORIGIN ? { rpId: process.env.RP_ID, rpName: 'Pull-ups', origins: [process.env.APP_ORIGIN] } : undefined;
+const isSignupOpen = process.env.SIGNUP_OPEN === 'true';
 
 // Cached briefly so a sync doesn't pay a read for auth; a revoked token stops working within a minute.
 const TOKEN_CACHE_TTL_MS = 60_000;
@@ -34,7 +38,7 @@ const JSON_HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-
 export async function handler(event: FunctionUrlEvent) {
   const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : '';
   try {
-    const response = await route({ method: event.requestContext.http.method, path: event.rawPath, headers: event.headers ?? {}, body }, { db, userIdForToken });
+    const response = await route({ method: event.requestContext.http.method, path: event.rawPath, headers: event.headers ?? {}, body }, { db, userIdForToken, webAuthn, isSignupOpen });
     return { statusCode: response.status, headers: JSON_HEADERS, body: JSON.stringify(response.body) };
   } catch (error) {
     console.error('request failed', event.rawPath, error);

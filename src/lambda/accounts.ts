@@ -1,51 +1,36 @@
-import { type Account, type InviteKind, type InviteResponse, cleanName } from '../shared/model';
-import { DEFAULT_TIME_ZONE, isValidTimeZone } from '../shared/time';
-import { hashToken, newSecret, newUserId } from './auth';
+import type { Account, InviteResponse } from '../shared/model';
+import { hashToken, newSecret } from './auth';
 import { type Db, PreconditionFailed } from './db';
+import { RequestError } from './errors';
 import { accountOf } from './profile';
 import type { Clock } from './sync';
 
-export const FRIEND_INVITE_TTL_MS = 7 * 86_400_000;
 export const DEVICE_LINK_TTL_MS = 15 * 60_000;
 
-/** A friend invite creates a new account; a device link signs another device into `createdBy`'s. Both are single-use. */
-export async function createInvite(db: Db, createdBy: string, kind: InviteKind, clock: Clock): Promise<InviteResponse> {
+const LINK_GONE = 'This link has expired or was already used.';
+
+/** A single-use link that signs another device into `userId`'s account. */
+export async function createDeviceLink(db: Db, userId: string, clock: Clock): Promise<InviteResponse> {
   const code = newSecret();
-  const expiresAt = clock.now() + (kind === 'friend' ? FRIEND_INVITE_TTL_MS : DEVICE_LINK_TTL_MS);
-  await db.putInvite(hashToken(code), kind === 'device' ? { kind, userId: createdBy, createdBy, expiresAt } : { kind, createdBy, expiresAt });
+  const expiresAt = clock.now() + DEVICE_LINK_TTL_MS;
+  await db.putInvite(hashToken(code), { kind: 'device', userId, createdBy: userId, expiresAt });
   return { code, expiresAt };
 }
 
-export type RedeemResult = { ok: true; token: string; account: Account } | { ok: false; status: number; error: string };
-
-const INVITE_GONE: RedeemResult = { ok: false, status: 410, error: 'This link has expired or was already used.' };
-
-export async function redeemInvite(db: Db, code: string, rawName: unknown, rawTimeZone: unknown, clock: Clock): Promise<RedeemResult> {
+/** Redeems a device link. A friend invite from before passkeys is refused: new accounts are made with a passkey. */
+export async function redeemDeviceLink(db: Db, code: string, clock: Clock): Promise<{ token: string; account: Account }> {
   const codeHash = hashToken(code);
   const invite = await db.getInvite(codeHash);
   // TTL deletion lags by hours or days, so expiry is checked here, not left to DynamoDB.
-  if (!invite || invite.expiresAt <= clock.now()) return INVITE_GONE;
-
+  if (!invite || invite.kind !== 'device' || invite.expiresAt <= clock.now()) throw new RequestError(410, LINK_GONE);
+  const user = await db.getUser(invite.userId!);
+  if (!user) throw new RequestError(410, LINK_GONE);
   const token = newSecret();
-  let account: Account;
   try {
-    if (invite.kind === 'device') {
-      const user = await db.getUser(invite.userId!);
-      if (!user) return INVITE_GONE;
-      await db.redeemInvite(codeHash, hashToken(token), user.id, null);
-      account = accountOf(user);
-    } else {
-      const name = cleanName(rawName);
-      if (!name) return { ok: false, status: 400, error: 'Pick a name of 1 to 24 characters.' };
-      const timeZone = rawTimeZone === undefined ? DEFAULT_TIME_ZONE : rawTimeZone;
-      if (!isValidTimeZone(timeZone)) return { ok: false, status: 400, error: 'timeZone must be an IANA time zone name.' };
-      const user = { id: newUserId(), name, createdAt: clock.now(), timeZone };
-      await db.redeemInvite(codeHash, hashToken(token), user.id, user);
-      account = accountOf(user);
-    }
+    await db.redeemInvite(codeHash, hashToken(token), user.id, clock.now());
   } catch (error) {
-    if (error instanceof PreconditionFailed) return INVITE_GONE;
+    if (error instanceof PreconditionFailed) throw new RequestError(410, LINK_GONE);
     throw error;
   }
-  return { ok: true, token, account };
+  return { token, account: accountOf(user) };
 }

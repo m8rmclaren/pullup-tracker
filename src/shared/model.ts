@@ -186,33 +186,45 @@ export interface SyncResponse {
 
 export const MAX_PUSHED_ENTRIES = 1000;
 
-/** The signed-in profile, as /api/sync, /api/join and /api/profile return it. */
+/** The signed-in profile, as /api/sync, /api/profile and every sign-in return it. */
 export interface Account extends ProfileFields {
   id: string;
   /** IANA zone the account's days are kept in. The server always sends it; an account persisted by an older client may lack it, which means DEFAULT_TIME_ZONE. */
   timeZone?: string;
 }
 
-/**
- * POST /api/join. `name` is required when the code is a friend invite and ignored for a device link.
- * `timeZone` is the device's zone, kept as the new account's zone; without it a new account gets DEFAULT_TIME_ZONE.
- */
+/** POST /api/join: redeems a device link. */
 export interface JoinRequest {
   code: string;
-  name?: string;
-  timeZone?: string;
 }
 
-export interface JoinResponse {
+/** What every way of signing a device in returns: a device link, a sign-up, a passkey sign-in. */
+export interface SessionResponse {
   token: string;
   account: Account;
 }
 
-export type InviteKind = 'friend' | 'device';
+/** POST /api/signup/options. `timeZone` is the device's zone, kept as the new account's. */
+export interface SignupOptionsRequest {
+  name: string;
+  timeZone?: string;
+}
 
-/** POST /api/invite. */
+/** POST /api/signup, /api/passkey/login and /api/passkey/register: the authenticator's response as JSON, and a name for this device. */
+export interface PasskeyRequest {
+  credential: unknown;
+  label?: string;
+}
+
+export interface PasskeySummary {
+  credentialId: string;
+  label?: string;
+  createdAt: number;
+}
+
+/** POST /api/invite. Device links are the only kind; friend invites were replaced by passkey sign-up. */
 export interface InviteRequest {
-  kind: InviteKind;
+  kind: 'device';
 }
 
 export interface InviteResponse {
@@ -223,8 +235,8 @@ export interface InviteResponse {
 export const MAX_NAME_LENGTH = 24;
 
 /** Trims and collapses whitespace; null if nothing printable is left or it is too long. */
-export function cleanName(input: unknown): string | null {
+export function cleanName(input: unknown, maxLength = MAX_NAME_LENGTH): string | null {
   if (typeof input !== 'string') return null;
   const cleaned = input.replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/\s+/g, ' ').trim();
-  return cleaned.length >= 1 && [...cleaned].length <= MAX_NAME_LENGTH ? cleaned : null;
+  return cleaned.length >= 1 && [...cleaned].length <= maxLength ? cleaned : null;
 }
