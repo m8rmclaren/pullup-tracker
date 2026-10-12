@@ -161,7 +161,7 @@ top of `src/lambda/dynamodb.ts`:
 |---|---|---|
 | `U#<userId>` | `P` | profile: name, `timeZone` (IANA; absent means `America/Denver`) |
 | `U#<userId>` | `E#<id>` | one set, plus `serverWrittenAt`, the server time it was written |
-| `U#<userId>` | `D#2026-10-08` | that user's day total: reps, sets, best set |
+| `U#<userId>` | `D#2026-10-08` | that user's day total: ring reps, sets, best set, hold seconds, and the same per exercise (`byExercise`) |
 | `U#<userId>` | `A#<key>` | a created exercise or variation that user made or logs to |
 | `X#<exerciseId>` | `X` / `V#<variationId>` | a created exercise, or a variation on an exercise |
 | `T#<digest>` | `T` | device token → user id |

@@ -507,6 +507,181 @@
       "day": "2026-10-08"
      }
     }
+   ],
+   "dayTotalRecords": {
+    "2026-10-08": {
+     "day": "2026-10-08",
+     "reps": 33,
+     "sets": 6,
+     "bestSetReps": 20,
+     "holdSeconds": 135,
+     "byExercise": {
+      "pull-up": {
+       "sets": 1,
+       "reps": 8,
+       "bestSetReps": 8,
+       "bestAddedWeightLbs": 10
+      },
+      "push-up": {
+       "sets": 1,
+       "reps": 20,
+       "bestSetReps": 20,
+       "bestAddedWeightLbs": 45
+      },
+      "chin-up": {
+       "sets": 1,
+       "reps": 5,
+       "bestSetReps": 5
+      },
+      "front-lever": {
+       "sets": 1,
+       "holdSeconds": 45,
+       "bestHoldSeconds": 45
+      },
+      "plank": {
+       "sets": 1,
+       "holdSeconds": 90,
+       "bestHoldSeconds": 90
+      },
+      "x-k3p7abcdefgh2345": {
+       "sets": 1,
+       "reps": 3,
+       "bestSetReps": 3
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "created exercises: a rep unit joins the ring, other units and holds stay per exercise",
+   "timeZone": "Europe/London",
+   "goalReps": 35,
+   "definitions": [
+    {
+     "id": "x-archertypewriter",
+     "name": "Archer typewriters",
+     "measure": "count",
+     "unit": "rep",
+     "createdAt": 1,
+     "updatedAt": 1
+    },
+    {
+     "id": "x-redrocksstairs22",
+     "name": "Red Rocks stairs",
+     "measure": "count",
+     "unit": "lap",
+     "createdAt": 1,
+     "updatedAt": 1
+    },
+    {
+     "id": "x-wallsitaaaaaaaaa",
+     "name": "Wall sit",
+     "measure": "time",
+     "createdAt": 1,
+     "updatedAt": 1
+    }
+   ],
+   "entries": [
+    {
+     "id": "c1",
+     "doneAt": "2026-10-08T07:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-archertypewriter",
+     "reps": 6
+    },
+    {
+     "id": "c2",
+     "doneAt": "2026-10-08T07:05:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-archertypewriter",
+     "reps": 4,
+     "addedWeightLbs": 5
+    },
+    {
+     "id": "c3",
+     "doneAt": "2026-10-08T07:10:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 1
+    },
+    {
+     "id": "c4",
+     "doneAt": "2026-10-08T07:40:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 1
+    },
+    {
+     "id": "c5",
+     "doneAt": "2026-10-08T08:10:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 1
+    },
+    {
+     "id": "c6",
+     "doneAt": "2026-10-08T08:20:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-wallsitaaaaaaaaa",
+     "holdSeconds": 120
+    },
+    {
+     "id": "c7",
+     "doneAt": "2026-10-08T08:30:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-wallsitaaaaaaaaa",
+     "holdSeconds": 75
+    },
+    {
+     "id": "c8",
+     "doneAt": "2026-10-08T08:40:00+01:00",
+     "updatedAt": 1,
+     "reps": 7
+    }
+   ],
+   "dayTotalRecords": {
+    "2026-10-08": {
+     "day": "2026-10-08",
+     "reps": 17,
+     "sets": 8,
+     "bestSetReps": 7,
+     "holdSeconds": 195,
+     "byExercise": {
+      "x-archertypewriter": {
+       "sets": 2,
+       "reps": 10,
+       "bestSetReps": 6,
+       "bestAddedWeightLbs": 5
+      },
+      "x-redrocksstairs22": {
+       "sets": 3,
+       "reps": 3,
+       "bestSetReps": 1
+      },
+      "x-wallsitaaaaaaaaa": {
+       "sets": 2,
+       "holdSeconds": 195,
+       "bestHoldSeconds": 120
+      },
+      "pull-up": {
+       "sets": 1,
+       "reps": 7,
+       "bestSetReps": 7
+      }
+     }
+    }
+   },
+   "checks": [
+    {
+     "now": "2026-10-08T12:00:00+01:00",
+     "stats": {
+      "today": {
+       "day": "2026-10-08",
+       "reps": 17,
+       "sets": 3
+      }
+     }
+    }
    ]
   },
   {
@@ -2905,6 +3080,68 @@
      }
     }
    ]
+  }
+ ],
+ "legacyDayTotals": [
+  {
+   "name": "a total written before v2 reads as all pull-ups",
+   "dayTotal": {
+    "day": "2026-10-08",
+    "reps": 41,
+    "sets": 7,
+    "bestSetReps": 8
+   },
+   "byExercise": {
+    "pull-up": {
+     "sets": 7,
+     "reps": 41,
+     "bestSetReps": 8
+    }
+   }
+  },
+  {
+   "name": "an emptied total written before v2 has no exercises",
+   "dayTotal": {
+    "day": "2026-10-08",
+    "reps": 0,
+    "sets": 0,
+    "bestSetReps": 0
+   },
+   "byExercise": {}
+  },
+  {
+   "name": "a v2 total is read as written",
+   "dayTotal": {
+    "day": "2026-10-08",
+    "reps": 5,
+    "sets": 2,
+    "bestSetReps": 5,
+    "holdSeconds": 30,
+    "byExercise": {
+     "chin-up": {
+      "sets": 1,
+      "reps": 5,
+      "bestSetReps": 5
+     },
+     "plank": {
+      "sets": 1,
+      "holdSeconds": 30,
+      "bestHoldSeconds": 30
+     }
+    }
+   },
+   "byExercise": {
+    "chin-up": {
+     "sets": 1,
+     "reps": 5,
+     "bestSetReps": 5
+    },
+    "plank": {
+     "sets": 1,
+     "holdSeconds": 30,
+     "bestHoldSeconds": 30
+    }
+   }
   }
  ]
 }

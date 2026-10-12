@@ -96,6 +96,17 @@ describe('created definitions in sync', () => {
     expect(db.adoptions.get('ama')!.has('x-bbbbbbbbbbbbbbbb')).toBe(false);
   });
 
+  it('counts a created exercise on the ring by its unit, and keys its day totals by its id', async () => {
+    const { db, sync } = setup();
+    const typewriters: ExerciseDefinition = { id: 'x-archertypewriter', name: 'Archer typewriters', measure: 'count', unit: 'rep', createdAt: OCT8, updatedAt: OCT8 };
+    await sync(AMA_TOKEN, { pushedDefinitions: [STAIRS, typewriters], pushedEntries: [makeEntry({ exerciseId: STAIRS.id, reps: 3 }), makeEntry({ exerciseId: typewriters.id, reps: 10 }), makeEntry({ reps: 7 })] });
+    expect(await db.getDayTotal('ama', '2026-10-08')).toMatchObject({
+      reps: 17,
+      sets: 3,
+      byExercise: { [STAIRS.id]: { sets: 1, reps: 3, bestSetReps: 3 }, [typewriters.id]: { sets: 1, reps: 10, bestSetReps: 10 }, 'pull-up': { sets: 1, reps: 7, bestSetReps: 7 } },
+    });
+  });
+
   it('rejects malformed definitions and too many at once', async () => {
     const { sync } = setup();
     expect((await sync(AMA_TOKEN, { pushedDefinitions: [{ ...STAIRS, unit: undefined }] })).status).toBe(400);

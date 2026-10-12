@@ -7,7 +7,8 @@ import { type Db, type StoredDayTotal, type Invite, type StoredDefinition, type 
 //   U#<userId>  P           profile: id, name, createdAt, timeZone? (absent means America/Denver)
 //   U#<userId>  E#<id>      entry: Entry fields (exerciseId?, variationIds? as a list, reps or holdSeconds, …) + serverWrittenAt
 //                           (LSIs `by-server-written-at` and `by-done-at` index these)
-//   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, version, userId; monthPk/monthSk feed GSI `by-month`
+//   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, holdSeconds, byExercise (map), version, userId;
+//                           monthPk/monthSk feed GSI `by-month`. Totals written before v2 lack holdSeconds and byExercise.
 //   T#<hash>    T           device token: userId, createdAt
 //   U#<userId>  A#<key>     adopted definition (key is definitionKeyString: `x-…` or `<exerciseId>/v-…`): adoptedAt
 //   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
@@ -41,7 +42,10 @@ function itemToEntry(item: Record<string, unknown>): StoredEntry {
 }
 
 function itemToDayTotal(item: Record<string, unknown>): StoredDayTotal {
-  return { day: item.day as string, reps: item.reps as number, sets: item.sets as number, bestSetReps: item.bestSetReps as number, version: item.version as number };
+  const dayTotal: StoredDayTotal = { day: item.day as string, reps: item.reps as number, sets: item.sets as number, bestSetReps: item.bestSetReps as number, version: item.version as number };
+  if (item.holdSeconds !== undefined) dayTotal.holdSeconds = item.holdSeconds as number;
+  if (item.byExercise !== undefined) dayTotal.byExercise = item.byExercise as StoredDayTotal['byExercise'];
+  return dayTotal;
 }
 
 /** Maps a lost condition (single put or transaction) to PreconditionFailed. */

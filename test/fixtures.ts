@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { expect } from 'vitest';
+import type { ExerciseDefinition } from '../src/shared/definitions';
 import type { Entry } from '../src/shared/model';
+import type { DayTotalRecord } from '../src/shared/stats';
 
 export function loadFixture<T>(name: string): T {
   return JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as T;
@@ -32,8 +34,12 @@ export interface StatsFixtureCase {
   timeZone: string;
   goalReps: number;
   entries: FixtureEntry[];
-  /** The server's stored day totals for this history, where the case pins them. */
+  /** Created exercises the entries log to, for their units. */
+  definitions?: ExerciseDefinition[];
+  /** The server's stored day totals for this history as v1 wrote them, where the case pins them. */
   dayTotals?: Record<string, { reps: number; sets: number; bestSetReps: number }>;
+  /** Full day totals (computeDayTotal) for the days the case pins. */
+  dayTotalRecords?: Record<string, DayTotalRecord>;
   checks: {
     now: string;
     stats?: Record<string, unknown>;

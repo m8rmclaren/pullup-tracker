@@ -199,3 +199,59 @@ export function heaviestSet(entries: Iterable<Entry>, nowMs: number, timeZone: s
   }
   return heaviest;
 }
+
+/** One exercise's share of a day, in that exercise's own unit. Counted exercises carry reps, timed ones holdSeconds. */
+export interface ExerciseDayTotal {
+  sets: number;
+  reps?: number;
+  bestSetReps?: number;
+  holdSeconds?: number;
+  bestHoldSeconds?: number;
+  /** The most added weight in any one set, absent when every set was bodyweight. */
+  bestAddedWeightLbs?: number;
+}
+
+/**
+ * A user's whole day, as the server stores it for boards. `reps` and `bestSetReps` follow the
+ * ring rule (rep-unit counted sets only); `sets` counts every set; `holdSeconds` sums every hold.
+ */
+export interface DayTotalRecord {
+  day: string;
+  reps: number;
+  sets: number;
+  bestSetReps: number;
+  holdSeconds: number;
+  byExercise: Record<string, ExerciseDayTotal>;
+}
+
+/** Totals for one day's entries (already filtered to that day). */
+export function computeDayTotal(day: string, entries: Iterable<Entry>, unitOf: UnitLookup = builtInUnit): DayTotalRecord {
+  const dayTotal: DayTotalRecord = { day, reps: 0, sets: 0, bestSetReps: 0, holdSeconds: 0, byExercise: {} };
+  for (const entry of entries) {
+    if (entry.deleted) continue;
+    const exerciseId = exerciseIdOf(entry);
+    const exerciseTotal = (dayTotal.byExercise[exerciseId] ??= { sets: 0 });
+    dayTotal.sets++;
+    exerciseTotal.sets++;
+    if (entry.holdSeconds !== undefined) {
+      dayTotal.holdSeconds += entry.holdSeconds;
+      exerciseTotal.holdSeconds = (exerciseTotal.holdSeconds ?? 0) + entry.holdSeconds;
+      exerciseTotal.bestHoldSeconds = Math.max(exerciseTotal.bestHoldSeconds ?? 0, entry.holdSeconds);
+    } else if (entry.reps !== undefined) {
+      exerciseTotal.reps = (exerciseTotal.reps ?? 0) + entry.reps;
+      exerciseTotal.bestSetReps = Math.max(exerciseTotal.bestSetReps ?? 0, entry.reps);
+      if (isRingEntry(entry, unitOf)) {
+        dayTotal.reps += entry.reps;
+        dayTotal.bestSetReps = Math.max(dayTotal.bestSetReps, entry.reps);
+      }
+    }
+    if (entry.addedWeightLbs) exerciseTotal.bestAddedWeightLbs = Math.max(exerciseTotal.bestAddedWeightLbs ?? 0, entry.addedWeightLbs);
+  }
+  return dayTotal;
+}
+
+/** Per-exercise totals of a stored day. A total written before v2 has no byExercise and was all pull-ups. */
+export function exerciseDayTotals(dayTotal: Pick<DayTotalRecord, 'reps' | 'sets' | 'bestSetReps'> & { byExercise?: Record<string, ExerciseDayTotal> }): Record<string, ExerciseDayTotal> {
+  if (dayTotal.byExercise) return dayTotal.byExercise;
+  return dayTotal.sets ? { [PULL_UP]: { sets: dayTotal.sets, reps: dayTotal.reps, bestSetReps: dayTotal.bestSetReps } } : {};
+}
