@@ -150,6 +150,12 @@ Resources:
                 Effect: Allow
                 Action: cloudfront:*
                 Resource: '*'
+              # The daily empty-account sweep: an EventBridge rule that invokes the API Lambda.
+              # It needs no role of its own (a Lambda resource policy allows it), so the boundary is unchanged.
+              - Sid: SweepRules
+                Effect: Allow
+                Action: [events:PutRule, events:DeleteRule, events:DescribeRule, events:PutTargets, events:RemoveTargets, events:ListTargetsByRule, events:ListTagsForResource, events:TagResource, events:UntagResource]
+                Resource: !Sub 'arn:aws:events:*:${AWS::AccountId}:rule/${Prefix}-*'
               - !If
                 - HasDomain
                 # RequestCertificate has no resource to scope to; everything after it is limited to us-east-1, where CloudFront needs it.

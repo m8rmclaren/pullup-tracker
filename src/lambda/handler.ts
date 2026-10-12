@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DynamoDb } from './dynamodb';
 import { route } from './http';
 import type { WebAuthnConfig } from './passkeys';
+import { type SweepResult, sweepEmptyAccounts } from './sweep';
 
 // Lambda Function URL (payload v2) shapes, narrowed to what is read here.
 interface FunctionUrlEvent {
@@ -35,7 +36,25 @@ async function userIdForToken(tokenHash: string): Promise<string | null> {
 
 const JSON_HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store' };
 
-export async function handler(event: FunctionUrlEvent) {
+/** The daily EventBridge rule invokes the function directly with this input; it never arrives through the Function URL. */
+interface SweepEvent {
+  task: 'sweep';
+}
+
+interface FunctionUrlResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export async function handler(event: FunctionUrlEvent): Promise<FunctionUrlResponse>;
+export async function handler(event: SweepEvent): Promise<SweepResult>;
+export async function handler(event: FunctionUrlEvent | SweepEvent): Promise<FunctionUrlResponse | SweepResult> {
+  if ('task' in event) {
+    const result = await sweepEmptyAccounts(db, { now: Date.now });
+    console.log(`swept empty accounts: deleted ${result.deleted}, kept ${result.kept}, left ${result.remaining} for the next run`);
+    return result;
+  }
   const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : '';
   try {
     const response = await route({ method: event.requestContext.http.method, path: event.rawPath, headers: event.headers ?? {}, body }, { db, userIdForToken, webAuthn, isSignupOpen });

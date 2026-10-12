@@ -38,3 +38,9 @@ variable "signup_open" {
   type        = bool
   default     = false
 }
+
+variable "sweep_enabled" {
+  description = "Run the daily empty-account sweep. Needs the deploy role's SweepRules permission from infra/bootstrap.yaml first."
+  type        = bool
+  default     = false
+}

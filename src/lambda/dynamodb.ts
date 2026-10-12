@@ -573,4 +573,39 @@ export class DynamoDb implements Db {
     const Item = { pk: userPartitionKey(userId), sk: DAILY_COUNT_SK_PREFIX[kind] + day, ...count, ttlEpochSeconds };
     await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
   }
+
+  async sweepMarkersFor(day: string) {
+    const items = await this.queryAll({ KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `W#${day}` }, ProjectionExpression: 'sk' });
+    return items.map((item) => (item.sk as string).slice('U#'.length));
+  }
+
+  async deleteSweepMarker(day: string, userId: string) {
+    await this.documentClient.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `W#${day}`, sk: userPartitionKey(userId) } }));
+  }
+
+  private async hasUserItem(userId: string, prefix: string): Promise<boolean> {
+    const response = await this.documentClient.send(
+      new QueryCommand({ TableName: this.tableName, ConsistentRead: true, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': prefix }, ProjectionExpression: 'sk', Limit: 1 }),
+    );
+    return !!response.Items?.length;
+  }
+
+  async hasContent(userId: string) {
+    const found = await Promise.all([ENTRY_SK_PREFIX, FRIEND_SK_PREFIX, MEMBERSHIP_SK_PREFIX, ADOPTED_SK_PREFIX].map((prefix) => this.hasUserItem(userId, prefix)));
+    return found.some(Boolean);
+  }
+
+  async deleteAccount(userId: string) {
+    const items = await this.queryAll({ KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': userPartitionKey(userId) }, ProjectionExpression: 'pk, sk, codeHash' });
+    const keys: Record<string, unknown>[] = items.map((item) => ({ pk: item.pk, sk: item.sk }));
+    for (const item of items) {
+      if ((item.sk as string).startsWith(TOKEN_SK_PREFIX)) keys.push({ pk: `T#${(item.sk as string).slice(TOKEN_SK_PREFIX.length)}`, sk: 'T' });
+      if (item.sk === 'L') keys.push(linkKey(item.codeHash as string));
+    }
+    // The role has no BatchWriteItem; a transaction deletes up to 100 at a time. The profile goes last, so a sweep that dies part-way finds the account again.
+    const profileLast = [...keys.filter((key) => key.sk !== 'P'), ...keys.filter((key) => key.sk === 'P')];
+    for (let i = 0; i < profileLast.length; i += 100) {
+      await this.documentClient.send(new TransactWriteCommand({ TransactItems: profileLast.slice(i, i + 100).map((Key) => ({ Delete: { TableName: this.tableName, Key } })) }));
+    }
+  }
 }

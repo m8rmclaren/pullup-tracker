@@ -557,8 +557,19 @@ honest trade for collecting nothing, and the app says so at sign-up.
 
 **Abuse.** Open sign-up on a Lambda invites junk accounts. They are harmless to users,
 since nobody sees an account they didn't friend, but they cost storage.
-- A CloudFront/WAF rate rule on `/api/signup*` and `/api/links/resolve` per IP.
-- An account with no entries and no friends after 30 days is deleted by a scheduled sweep.
+- A CloudFront/WAF rate rule per IP on `/api/signup*`, `/api/passkey/login*` (which also
+  writes a challenge) and `/api/links/resolve` (which fans out over a challenge's members).
+  The distribution's web ACL belongs to its CloudFront flat-rate plan, so the rule is added
+  in the console; the README has its exact definition.
+- An account with no entries, no friends, no challenge memberships and no adopted
+  exercises 30 days after sign-up is deleted by a daily sweep. Any of those keeps it, and a
+  kept account is never looked at again. Sign-up writes a `W#<day>` marker for the sweep
+  day, which the sweep queries (the role can't Scan), looking back 30 days so a missed run
+  catches up. It deletes the account's partition, its session tokens (through the
+  `U# T#` items) and its friend link, in transactions of 100 (the role can't
+  BatchWriteItem), profile last. An EventBridge rule invokes the Lambda directly with
+  `{"task":"sweep"}`; it never goes through the Function URL. Accounts from before passkeys
+  have no marker and are never swept.
 
 **Challenges** are 32 random bytes, stored as `C#<sha256>` with a 5-minute expiry, consumed
 with a conditional delete so one can't be replayed. **Verification** uses
@@ -572,7 +583,9 @@ anyone else signs up.** The custom domain (already supported in `infra/`) become
 requirement.
 
 **Associated Domains (iOS).** The site serves `/.well-known/apple-app-site-association`
-(`application/json`, no redirect) with `webcredentials` and `applinks` entries. The app
+(`application/json`, no redirect) with `webcredentials` and `applinks` entries. The build
+writes it only when `APPLE_APP_ID` (Team ID + bundle id) is set, and the service worker
+doesn't precache it. The app
 declares `webcredentials:<domain>` and `applinks:<domain>`. Links keep the code in
 the fragment (`#join=<code>`) so it never reaches CloudFront logs. AASA `components` can
 match a fragment. Verify on a device early. The fallback is a "Paste link" field.
