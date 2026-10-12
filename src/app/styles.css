@@ -1221,3 +1221,66 @@ input:focus-visible {
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
+
+/* ---------- friends ---------- */
+
+.friends {
+  padding: 8px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card__title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.people li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  border-top: 1px solid var(--line);
+}
+
+.people li:first-child {
+  border-top: 0;
+}
+
+.people__name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-text--quiet {
+  color: var(--muted);
+}
+
+.btn-text--danger {
+  color: var(--danger);
+}
+
+.qr {
+  display: block;
+  width: min(220px, 70%);
+  height: auto;
+  margin: 8px auto 12px;
+  border-radius: 8px;
+}
+
+.link-lead {
+  font-size: 17px;
+  line-height: 1.4;
+}

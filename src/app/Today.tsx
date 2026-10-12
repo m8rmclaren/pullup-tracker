@@ -77,7 +77,7 @@ export function Today({ tracker, stats, now, timeZone, usualSetReps, onLogged, o
 
       {tracker.status === 'unconfigured' ? (
         <button type="button" class="banner" onClick={onOpenSettings}>
-          Logging works offline. <u>Open an invite link</u> to back up, sync across devices and join the board.
+          Logging works offline. <u>Sign in or create an account</u> to back up, sync across devices and add friends.
         </button>
       ) : null}
 

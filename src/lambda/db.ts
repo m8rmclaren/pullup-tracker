@@ -25,6 +25,31 @@ export interface User extends ProfileFields {
   createdAt: number;
   /** Bumped on every profile write. Absent on a profile never edited since sign-up. */
   version?: number;
+  /** The link the account signed up through, written once. Absent for accounts from before links, or made without one. */
+  joinedVia?: { kind: LinkKind; linkCreatedBy: string };
+}
+
+export type LinkKind = 'friend' | 'challenge';
+
+/** A shared link: whoever redeems it becomes the creator's friend, and the kind adds a landing. */
+export interface Link {
+  kind: LinkKind;
+  createdBy: string;
+  createdAt: number;
+  /** Growth counters: resolves of the link, and redeems that made something new. */
+  openCount: number;
+  joinCount: number;
+  /** Bumped on every write, so counter bumps (read, then put) can't lose one another. */
+  version: number;
+  challengeId?: string;
+  /** A challenge link stops resolving after this; a friend link never expires. */
+  expiresAt?: number;
+}
+
+/** A user's one friend link. The code is kept readable here so every device can show it; `I#<codeHash>` is the lookup. */
+export interface FriendLink {
+  code: string;
+  codeHash: string;
 }
 
 export interface Invite {
@@ -47,6 +72,8 @@ export interface PendingChallenge {
   /** For signup: the account's name and zone, held until the passkey exists. */
   name?: string;
   timeZone?: string;
+  /** For signup through a link: its digest, redeemed in the same transaction. */
+  linkCodeHash?: string;
   expiresAt: number;
 }
 
@@ -68,6 +95,8 @@ export interface NewAccount {
   tokenHash: string;
   /** The day the empty-account sweep first looks at this account. */
   sweepDay: string;
+  /** Signing up through a link befriends its creator in the same write. */
+  friendId?: string;
 }
 
 /** Thrown when a conditional write loses a race; the caller re-reads and retries. */
@@ -124,8 +153,27 @@ export interface Db {
   addPasskey(userId: string, passkey: Passkey): Promise<void>;
   /** Replaces a stored passkey, to record its sign count. */
   putPasskey(userId: string, passkey: Passkey): Promise<void>;
-  /** Writes the profile, passkey, token and sweep marker at once. Throws PreconditionFailed if the user id is taken. */
+  /** Writes the profile, passkey, token, sweep marker and any friendship at once. Throws PreconditionFailed if the user id is taken. */
   createAccount(account: NewAccount): Promise<void>;
+  /** Profiles by id; missing ones are absent. */
+  getUsers(userIds: string[]): Promise<Map<string, User>>;
+
+  getLink(codeHash: string): Promise<Link | null>;
+  /** Replaces the link, conditional on its stored `version`; throws PreconditionFailed if it moved or is gone. */
+  putLink(codeHash: string, link: Link, expectedVersion: number): Promise<void>;
+  getFriendLink(userId: string): Promise<FriendLink | null>;
+  /**
+   * Makes `next` the user's friend link and stores its `link` item, deleting `previous`'s.
+   * Conditional on `previous` still being the current one (null: none yet).
+   */
+  replaceFriendLink(userId: string, next: FriendLink, link: Link, previous: FriendLink | null): Promise<void>;
+
+  friendIds(userId: string): Promise<string[]>;
+  isFriend(userId: string, otherUserId: string): Promise<boolean>;
+  /** Writes both sides of the friendship. Throws PreconditionFailed if they were already friends. */
+  befriend(userId: string, friendId: string, createdAt: number): Promise<void>;
+  /** Deletes both sides; a no-op for people who weren't friends. */
+  unfriend(userId: string, friendId: string): Promise<void>;
 }
 
 /** Db semantics over plain maps, for tests and the dev server. */
@@ -143,6 +191,10 @@ export class MemoryDb implements Db {
   passkeys = new Map<string, Map<string, Passkey>>();
   /** sweep day → user ids */
   sweepMarkers = new Map<string, Set<string>>();
+  links = new Map<string, Link>();
+  friendLinks = new Map<string, FriendLink>();
+  /** userId → friendId → createdAt, both directions stored */
+  friendships = new Map<string, Map<string, number>>();
 
   private userEntries(userId: string) {
     let entriesById = this.entries.get(userId);
@@ -291,13 +343,70 @@ export class MemoryDb implements Db {
     this.userPasskeys(userId).set(passkey.credentialId, { ...passkey });
   }
 
-  async createAccount({ user, passkey, tokenHash, sweepDay }: NewAccount) {
+  async createAccount({ user, passkey, tokenHash, sweepDay, friendId }: NewAccount) {
     if (this.users.has(user.id) || this.tokens.has(tokenHash)) throw new PreconditionFailed();
+    if (friendId) await this.befriend(user.id, friendId, user.createdAt);
     this.users.set(user.id, { ...user });
     this.userPasskeys(user.id).set(passkey.credentialId, { ...passkey });
     this.tokens.set(tokenHash, user.id);
     let markedUserIds = this.sweepMarkers.get(sweepDay);
     if (!markedUserIds) this.sweepMarkers.set(sweepDay, (markedUserIds = new Set()));
     markedUserIds.add(user.id);
+  }
+
+  async getUsers(userIds: string[]) {
+    const usersById = new Map<string, User>();
+    for (const userId of userIds) {
+      const user = this.users.get(userId);
+      if (user) usersById.set(userId, { ...user });
+    }
+    return usersById;
+  }
+
+  async getLink(codeHash: string) {
+    const link = this.links.get(codeHash);
+    return link ? { ...link } : null;
+  }
+
+  async putLink(codeHash: string, link: Link, expectedVersion: number) {
+    if (this.links.get(codeHash)?.version !== expectedVersion) throw new PreconditionFailed();
+    this.links.set(codeHash, { ...link });
+  }
+
+  async getFriendLink(userId: string) {
+    const friendLink = this.friendLinks.get(userId);
+    return friendLink ? { ...friendLink } : null;
+  }
+
+  async replaceFriendLink(userId: string, next: FriendLink, link: Link, previous: FriendLink | null) {
+    if ((this.friendLinks.get(userId)?.codeHash ?? null) !== (previous?.codeHash ?? null)) throw new PreconditionFailed();
+    if (previous) this.links.delete(previous.codeHash);
+    this.links.set(next.codeHash, { ...link });
+    this.friendLinks.set(userId, { ...next });
+  }
+
+  private userFriendships(userId: string) {
+    let createdAtByFriendId = this.friendships.get(userId);
+    if (!createdAtByFriendId) this.friendships.set(userId, (createdAtByFriendId = new Map()));
+    return createdAtByFriendId;
+  }
+
+  async friendIds(userId: string) {
+    return [...this.userFriendships(userId).keys()];
+  }
+
+  async isFriend(userId: string, otherUserId: string) {
+    return this.userFriendships(userId).has(otherUserId);
+  }
+
+  async befriend(userId: string, friendId: string, createdAt: number) {
+    if (this.userFriendships(userId).has(friendId)) throw new PreconditionFailed();
+    this.userFriendships(userId).set(friendId, createdAt);
+    this.userFriendships(friendId).set(userId, createdAt);
+  }
+
+  async unfriend(userId: string, friendId: string) {
+    this.userFriendships(userId).delete(friendId);
+    this.userFriendships(friendId).delete(userId);
   }
 }

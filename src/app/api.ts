@@ -1,5 +1,5 @@
 import { type PublicKeyCredentialCreationOptionsJSON, type PublicKeyCredentialRequestOptionsJSON, startAuthentication, startRegistration } from '@simplewebauthn/browser';
-import type { Account, InviteResponse, PasskeySummary, SessionResponse, SyncRequest, SyncResponse } from '../shared/model';
+import type { Account, FriendsResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
 import type { ProfilePatch } from '../shared/profile';
 import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
@@ -66,11 +66,11 @@ function deviceLabel(): string {
   return 'Browser';
 }
 
-/** Makes an account: the server holds the name while this device creates a passkey for it. */
-export async function signUpWithPasskey(name: string, timeZone: string): Promise<SessionResponse> {
-  const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>('/api/signup/options', { name, timeZone });
+/** Makes an account: the server holds the name (and any link) while this device creates a passkey for it. */
+export async function signUpWithPasskey(name: string, timeZone: string, linkCode?: string): Promise<SignupResponse> {
+  const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>('/api/signup/options', linkCode ? { name, timeZone, linkCode } : { name, timeZone });
   const credential = await startRegistration({ optionsJSON });
-  return post<SessionResponse>('/api/signup', { credential, label: deviceLabel() });
+  return post<SignupResponse>('/api/signup', { credential, label: deviceLabel() });
 }
 
 /** Signs this device in with whichever passkey it has for this domain; there's no username to type. */
@@ -93,4 +93,35 @@ export function passkeyErrorMessage(error: unknown): string {
   if (error instanceof Error && error.name === 'NotAllowedError') return 'Cancelled.';
   if (error instanceof Error && error.name === 'InvalidStateError') return 'This device already has a passkey for this account.';
   return error instanceof Error ? error.message : String(error);
+}
+
+export const fetchFriends = (token: string) => post<FriendsResponse>('/api/friends', {}, token);
+
+export const removeFriend = (friendId: string, token: string) => post<object>('/api/friends/remove', { friendId }, token);
+
+export const rotateFriendLink = (token: string) => post<{ friendLink: string }>('/api/friends/rotate-link', {}, token);
+
+export const resolveLink = (code: string) => post<ResolvedLink>('/api/links/resolve', { code });
+
+export const redeemLink = (code: string, token: string) => post<RedeemedLink>('/api/links/redeem', { code }, token);
+
+/** A friend or challenge link. The code rides in the fragment, so it never reaches CloudFront's logs. */
+export const joinLink = (code: string) => `${location.origin}/#join=${code}`;
+
+export function parseJoinLink(text: string): string | null {
+  return /#join=([A-Za-z0-9_-]{16,256})\s*$/.exec(text.trim())?.[1] ?? null;
+}
+
+/** The share sheet where there is one, else the clipboard. Returns what to tell the user, if anything. */
+export async function shareUrl(url: string): Promise<string | null> {
+  try {
+    if (navigator.share) {
+      await navigator.share({ url });
+      return null;
+    }
+    await navigator.clipboard.writeText(url);
+    return 'Copied.';
+  } catch {
+    return null;
+  }
 }

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Entry } from '../shared/model';
 import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
-import { parseDeviceLink } from './api';
+import { parseDeviceLink, parseJoinLink } from './api';
+import { FriendsTab, LinkSheet } from './Friends';
 import { describeSet, unitLookup } from './labels';
 import { useNow, useTracker } from './hooks';
 import { DaySheet, DeviceLinkSheet, EntrySheet, PadWeightSheet, SettingsSheet } from './sheets';
@@ -17,12 +18,13 @@ type SheetState =
   | { kind: 'settings' }
   | { kind: 'weight' }
   | { kind: 'device'; code: string }
+  | { kind: 'link'; code: string }
   | null;
 
 interface Toast {
   id: number;
   text: string;
-  undo: () => void;
+  undo?: () => void;
 }
 
 const TOAST_DURATION_MS = 5000;
@@ -31,14 +33,15 @@ export function App({ tracker }: { tracker: Tracker }) {
   const version = useTracker(tracker);
   const timeZone = tracker.timeZone();
   const now = useNow(timeZone);
-  const [tab, setTab] = useState<'today' | 'trends'>('today');
+  const [tab, setTab] = useState<'today' | 'trends' | 'friends'>('today');
   const [sheet, setSheet] = useState<SheetState>(() => {
-    // An opened device link lands here; the code is taken out of the URL so a reload or a
-    // shared screenshot doesn't carry it along.
-    const code = parseDeviceLink(location.hash);
-    if (!code) return null;
+    // An opened link lands here; the code is taken out of the URL so a reload or a shared
+    // screenshot doesn't carry it along.
+    const deviceCode = parseDeviceLink(location.hash);
+    const joinCode = parseJoinLink(location.hash);
+    if (!deviceCode && !joinCode) return null;
     history.replaceState(null, '', location.pathname + location.search);
-    return { kind: 'device', code };
+    return deviceCode ? { kind: 'device', code: deviceCode } : { kind: 'link', code: joinCode! };
   });
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -48,7 +51,7 @@ export function App({ tracker }: { tracker: Tracker }) {
   const stats = useMemo(() => computeStats(entries, now, goal, timeZone, unitLookup(tracker)), [entries, now, goal, timeZone, tracker, version]);
   const usualSetReps = useMemo(() => usualReps(entries, now, timeZone), [entries, now, timeZone]);
 
-  const showToast = useCallback((text: string, undo: () => void) => {
+  const showToast = useCallback((text: string, undo?: () => void) => {
     clearTimeout(toastTimer.current);
     const id = Date.now();
     setToast({ id, text, undo });
@@ -100,23 +103,27 @@ export function App({ tracker }: { tracker: Tracker }) {
             onOpenSettings={() => setSheet({ kind: 'settings' })}
             onOpenPadWeight={() => setSheet({ kind: 'weight' })}
           />
-        ) : (
+        ) : tab === 'trends' ? (
           <Trends entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
+        ) : (
+          <FriendsTab tracker={tracker} onOpenSettings={() => setSheet({ kind: 'settings' })} />
         )}
       </main>
 
       {toast ? (
         <div class="toast" role="status" key={toast.id}>
           <span>{toast.text}</span>
-          <button
-            type="button"
-            onClick={() => {
-              toast.undo();
-              setToast(null);
-            }}
-          >
-            Undo
-          </button>
+          {toast.undo ? (
+            <button
+              type="button"
+              onClick={() => {
+                toast.undo?.();
+                setToast(null);
+              }}
+            >
+              Undo
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -132,6 +139,13 @@ export function App({ tracker }: { tracker: Tracker }) {
             <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
           </svg>
           Trends
+        </button>
+        <button type="button" class={tab === 'friends' ? 'is-on' : ''} aria-current={tab === 'friends'} onClick={() => setTab('friends')}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="9" cy="8" r="3.5" />
+            <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.2A6.5 6.5 0 0 1 21.5 20" />
+          </svg>
+          Friends
         </button>
       </nav>
 
@@ -152,8 +166,19 @@ export function App({ tracker }: { tracker: Tracker }) {
           onAdd={() => setSheet({ kind: 'add', day: sheet.day })}
         />
       ) : null}
-      {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={closeSheet} onOpenDeviceLink={(code) => setSheet({ kind: 'device', code })} /> : null}
+      {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={closeSheet} onOpenLink={(link) => setSheet(link)} /> : null}
       {sheet?.kind === 'device' ? <DeviceLinkSheet tracker={tracker} code={sheet.code} onClose={closeSheet} /> : null}
+      {sheet?.kind === 'link' ? (
+        <LinkSheet
+          tracker={tracker}
+          code={sheet.code}
+          onClose={closeSheet}
+          onRedeemed={(message) => {
+            setTab('friends');
+            showToast(message);
+          }}
+        />
+      ) : null}
       {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} now={now} timeZone={timeZone} onClose={closeSheet} /> : null}
     </div>
   );

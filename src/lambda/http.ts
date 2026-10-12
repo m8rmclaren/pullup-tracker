@@ -4,6 +4,8 @@ import { type Definition, MAX_PUSHED_DEFINITIONS, isValidDefinition } from '../s
 import { createDeviceLink, redeemDeviceLink } from './accounts';
 import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
 import { RequestError } from './errors';
+import { friendsResponse, rotateFriendLink } from './friends';
+import { redeemLink, resolveLink } from './links';
 import { type WebAuthnConfig, finishLogin, finishRegister, finishSignup, listPasskeys, startLogin, startRegister, startSignup } from './passkeys';
 import { accountOf, updateProfile } from './profile';
 import { hashToken, isPlausibleSecret } from './auth';
@@ -85,6 +87,21 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
     '/api/passkey/register/options': signedIn(async (userId) => ok(await startRegister(deps.db, webAuthn(), userId, clock))),
     '/api/passkey/register': signedIn(async (userId, body) => ok(await finishRegister(deps.db, webAuthn(), userId, body, clock))),
     '/api/passkey/list': signedIn(async (userId) => ok({ passkeys: await listPasskeys(deps.db, userId) })),
+    '/api/friends': signedIn(async (userId) => ok(await friendsResponse(deps.db, userId, clock))),
+    '/api/friends/remove': signedIn(async (userId, body) => {
+      if (typeof body.friendId !== 'string' || !body.friendId) return errorResponse(400, 'friendId must be a user id');
+      await deps.db.unfriend(userId, body.friendId);
+      return ok({});
+    }),
+    '/api/friends/rotate-link': signedIn(async (userId) => ok({ friendLink: await rotateFriendLink(deps.db, userId, clock) })),
+    '/api/links/resolve': async (body) => {
+      if (!isPlausibleSecret(body.code)) return errorResponse(404, 'This link has expired or was replaced.');
+      return ok(await resolveLink(deps.db, body.code, clock));
+    },
+    '/api/links/redeem': signedIn(async (userId, body) => {
+      if (!isPlausibleSecret(body.code)) return errorResponse(404, 'This link has expired or was replaced.');
+      return ok(await redeemLink(deps.db, userId, body.code, clock));
+    }),
   };
 
   const handler = handlers[request.path];

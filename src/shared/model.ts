@@ -240,3 +240,32 @@ export function cleanName(input: unknown, maxLength = MAX_NAME_LENGTH): string |
   const cleaned = input.replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/\s+/g, ' ').trim();
   return cleaned.length >= 1 && [...cleaned].length <= maxLength ? cleaned : null;
 }
+
+/** Someone on your friend list, or the person behind a link. */
+export interface Friend {
+  id: string;
+  name: string;
+}
+
+/** POST /api/friends. `friendLink` is your reusable link's code; the URL is `<origin>/#join=<code>`. */
+export interface FriendsResponse {
+  friends: Friend[];
+  friendLink: string;
+}
+
+/** POST /api/links/resolve, which needs no account: enough for the landing page. */
+export interface ResolvedLink {
+  kind: string;
+  inviterName: string;
+}
+
+/** POST /api/links/redeem, and a sign-up that came through a link. A client that doesn't know `kind` still has the friendship. */
+export interface RedeemedLink {
+  kind: string;
+  friend: Friend;
+}
+
+/** POST /api/signup: the session, plus what the link it came through did. */
+export interface SignupResponse extends SessionResponse {
+  redeemed?: RedeemedLink;
+}

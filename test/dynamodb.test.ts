@@ -240,4 +240,55 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     const laptopOptions = await post('/api/passkey/login/options');
     expect(await post('/api/passkey/login', { credential: laptop.get(laptopOptions.body as never, origin) })).toMatchObject({ status: 200, body: { account: { id: account.id } } });
   });
+
+  it('keeps one friend link per user, replaced only from the one read, and reads only live shared links', async () => {
+    const link = { kind: 'friend' as const, createdBy: 'f1', createdAt: 1, openCount: 0, joinCount: 0, version: 1 };
+    const first = { code: 'first-code', codeHash: 'first-hash' };
+    const raced = await Promise.allSettled([1, 2, 3].map((i) => db.replaceFriendLink('f1', { code: `c${i}`, codeHash: `h${i}` }, link, null)));
+    expect(raced.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const winner = (await db.getFriendLink('f1'))!;
+    await expect(db.replaceFriendLink('f1', first, link, { code: 'stale', codeHash: 'stale' })).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.replaceFriendLink('f1', first, link, winner);
+    expect(await db.getFriendLink('f1')).toEqual(first);
+    expect(await db.getLink(winner.codeHash)).toBeNull();
+    expect(await db.getLink('first-hash')).toEqual(link);
+
+    await expect(db.putLink('first-hash', { ...link, openCount: 1, version: 2 }, 5)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.putLink('first-hash', { ...link, openCount: 1, version: 2 }, 1);
+    const challengeLink = { kind: 'challenge' as const, createdBy: 'f1', createdAt: 1, openCount: 0, joinCount: 0, version: 1, challengeId: 'g-abc', expiresAt: 99_000 };
+    await db.putLink('missing-hash', challengeLink, 1).catch((error) => expect(error).toBeInstanceOf(PreconditionFailed));
+    await documentClient.send(new PutCommand({ TableName: tableName, Item: { pk: 'I#chal-hash', sk: 'I', ...challengeLink } }));
+    expect(await db.getLink('chal-hash')).toEqual(challengeLink);
+
+    // A friend invite from before passkeys, and a device link, share the key space but aren't shared links.
+    await db.putInvite('legacy-hash', { kind: 'friend', createdBy: 'admin', expiresAt: Date.now() + 60_000 });
+    await db.putInvite('device-hash', { kind: 'device', userId: 'f1', createdBy: 'f1', expiresAt: Date.now() + 60_000 });
+    expect(await db.getLink('legacy-hash')).toBeNull();
+    expect(await db.getLink('device-hash')).toBeNull();
+  });
+
+  it('writes friendships on both sides, once, and removes both', async () => {
+    await db.befriend('fa', 'fb', 3);
+    await expect(db.befriend('fa', 'fb', 4)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.befriend('fc', 'fa', 5);
+    expect((await db.friendIds('fa')).sort()).toEqual(['fb', 'fc']);
+    expect(await db.friendIds('fb')).toEqual(['fa']);
+    expect(await db.isFriend('fb', 'fa')).toBe(true);
+    expect(await db.isFriend('fb', 'fc')).toBe(false);
+    await db.unfriend('fb', 'fa');
+    expect(await db.friendIds('fa')).toEqual(['fc']);
+    expect(await db.friendIds('fb')).toEqual([]);
+    await db.unfriend('fb', 'nobody');
+  });
+
+  it('signs up through a link, keeping joinedVia through a profile edit, and batch-gets profiles', async () => {
+    const user = { id: 'j1', name: 'Jo', createdAt: 7, timeZone: 'Europe/London', joinedVia: { kind: 'friend' as const, linkCreatedBy: 'fa' } };
+    await db.createAccount({ user, passkey: { credentialId: 'cred-j1', publicKey: 'pk', counter: 0, createdAt: 7 }, tokenHash: 'tok-j1', sweepDay: '2026-11-07', friendId: 'fa' });
+    expect(await db.isFriend('fa', 'j1')).toBe(true);
+    expect(await db.getUser('j1')).toEqual(user);
+    await updateProfile(db, 'j1', { name: 'Joanna', nameUpdatedAt: 9 }, { now: Date.now });
+    expect(await db.getUser('j1')).toEqual({ ...user, name: 'Joanna', nameUpdatedAt: 9, version: 1 });
+    const users = await db.getUsers(['j1', 'k1', 'nobody', 'j1']);
+    expect([...users.keys()].sort()).toEqual(['j1', 'k1']);
+  });
 });
