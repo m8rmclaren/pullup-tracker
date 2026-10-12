@@ -4,7 +4,13 @@ import type { Tracker } from './tracker';
 
 export function useTracker(tracker: Tracker): number {
   const [version, setVersion] = useState(0);
-  useEffect(() => tracker.subscribe(() => setVersion((previousVersion) => previousVersion + 1)), [tracker]);
+  useEffect(() => {
+    const bump = () => setVersion((previousVersion) => previousVersion + 1);
+    const unsubscribe = tracker.subscribe(bump);
+    // The first sync starts before the first render; one that finished before this effect ran would otherwise go unseen.
+    bump();
+    return unsubscribe;
+  }, [tracker]);
   return version;
 }
 

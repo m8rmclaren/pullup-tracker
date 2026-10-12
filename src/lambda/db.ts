@@ -100,6 +100,21 @@ export interface Membership {
   linkCodeHash: string;
 }
 
+/** A friend request, as either side stores it. The receiver's copy becomes a tombstone when declined. */
+export interface FriendRequest {
+  /** The other person: the sender on the receiver's side, the receiver on the sender's. */
+  userId: string;
+  challengeId: string;
+  createdAt: number;
+  declinedAt?: number;
+}
+
+/** A per-user, per-day counter (friend requests sent), put with a version since the API role can't UpdateItem. */
+export interface DailyCount {
+  count: number;
+  version: number;
+}
+
 /** What joining a challenge writes, in one transaction: both sides of the membership, the member's own link, and the adoption of the exercise. */
 export interface ChallengeJoin {
   userId: string;
@@ -213,6 +228,29 @@ export interface Db {
   getMembership(userId: string, challengeId: string): Promise<Membership | null>;
   membershipsOf(userId: string): Promise<Membership[]>;
   challengeMemberIds(challengeId: string): Promise<string[]>;
+
+  /** Requests others sent this user (R#), tombstones included. */
+  incomingRequests(userId: string): Promise<FriendRequest[]>;
+  /** Requests this user sent (S#). */
+  sentRequests(userId: string): Promise<FriendRequest[]>;
+  getIncomingRequest(userId: string, fromUserId: string): Promise<FriendRequest | null>;
+  getSentRequest(userId: string, toUserId: string): Promise<FriendRequest | null>;
+  /** Writes both sides. Throws PreconditionFailed if the receiver already has a request (or tombstone) from the sender. */
+  sendRequest(fromUserId: string, toUserId: string, challengeId: string, createdAt: number): Promise<void>;
+  /** Writes only the sender's side, for a request whose receiver already declined: the sender sees "Requested" again, the receiver nothing. */
+  putSentRequest(fromUserId: string, request: FriendRequest): Promise<void>;
+  /** Turns the receiver's side into a tombstone; the sender's side stays. */
+  declineRequest(userId: string, fromUserId: string, declinedAt: number): Promise<void>;
+  /**
+   * Deletes the request in both directions, both sides of each, and writes both sides of the
+   * friendship. Throws PreconditionFailed if they were already friends.
+   */
+  acceptRequest(userId: string, fromUserId: string, createdAt: number): Promise<void>;
+  /** Deletes the sender's side, and the receiver's unless it is a tombstone. */
+  cancelRequest(fromUserId: string, toUserId: string): Promise<void>;
+  getDailyCount(userId: string, kind: 'requests', day: string): Promise<DailyCount | null>;
+  /** Conditional on the stored version (null: none yet); expires with `ttlEpochSeconds`. */
+  putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number): Promise<void>;
 }
 
 /** Db semantics over plain maps, for tests and the dev server. */
@@ -237,6 +275,12 @@ export class MemoryDb implements Db {
   challenges = new Map<string, Challenge>();
   /** userId → challengeId → membership; the challenge's side is derived from it */
   memberships = new Map<string, Map<string, Membership>>();
+  /** receiverId → senderId → request (R#) */
+  receivedRequests = new Map<string, Map<string, FriendRequest>>();
+  /** senderId → receiverId → request (S#) */
+  sentRequestsByUser = new Map<string, Map<string, FriendRequest>>();
+  /** `${userId}|${kind}|${day}` → count */
+  dailyCounts = new Map<string, DailyCount>();
 
   private userEntries(userId: string) {
     let entriesById = this.entries.get(userId);
@@ -510,5 +554,68 @@ export class MemoryDb implements Db {
 
   async challengeMemberIds(challengeId: string) {
     return [...this.memberships].filter(([, membershipsById]) => membershipsById.has(challengeId)).map(([userId]) => userId);
+  }
+
+  private requestsIn(map: Map<string, Map<string, FriendRequest>>, userId: string) {
+    let requestsByUser = map.get(userId);
+    if (!requestsByUser) map.set(userId, (requestsByUser = new Map()));
+    return requestsByUser;
+  }
+
+  async incomingRequests(userId: string) {
+    return [...this.requestsIn(this.receivedRequests, userId).values()].map((request) => ({ ...request }));
+  }
+
+  async sentRequests(userId: string) {
+    return [...this.requestsIn(this.sentRequestsByUser, userId).values()].map((request) => ({ ...request }));
+  }
+
+  async getIncomingRequest(userId: string, fromUserId: string) {
+    const request = this.requestsIn(this.receivedRequests, userId).get(fromUserId);
+    return request ? { ...request } : null;
+  }
+
+  async getSentRequest(userId: string, toUserId: string) {
+    const request = this.requestsIn(this.sentRequestsByUser, userId).get(toUserId);
+    return request ? { ...request } : null;
+  }
+
+  async sendRequest(fromUserId: string, toUserId: string, challengeId: string, createdAt: number) {
+    if (this.requestsIn(this.receivedRequests, toUserId).has(fromUserId)) throw new PreconditionFailed();
+    this.requestsIn(this.receivedRequests, toUserId).set(fromUserId, { userId: fromUserId, challengeId, createdAt });
+    this.requestsIn(this.sentRequestsByUser, fromUserId).set(toUserId, { userId: toUserId, challengeId, createdAt });
+  }
+
+  async putSentRequest(fromUserId: string, request: FriendRequest) {
+    this.requestsIn(this.sentRequestsByUser, fromUserId).set(request.userId, { ...request });
+  }
+
+  async declineRequest(userId: string, fromUserId: string, declinedAt: number) {
+    const request = this.requestsIn(this.receivedRequests, userId).get(fromUserId);
+    if (request && request.declinedAt === undefined) request.declinedAt = declinedAt;
+  }
+
+  async acceptRequest(userId: string, fromUserId: string, createdAt: number) {
+    await this.befriend(userId, fromUserId, createdAt);
+    for (const [receiverId, senderId] of [[userId, fromUserId], [fromUserId, userId]] as const) {
+      this.requestsIn(this.receivedRequests, receiverId).delete(senderId);
+      this.requestsIn(this.sentRequestsByUser, senderId).delete(receiverId);
+    }
+  }
+
+  async cancelRequest(fromUserId: string, toUserId: string) {
+    this.requestsIn(this.sentRequestsByUser, fromUserId).delete(toUserId);
+    if (this.requestsIn(this.receivedRequests, toUserId).get(fromUserId)?.declinedAt === undefined) this.requestsIn(this.receivedRequests, toUserId).delete(fromUserId);
+  }
+
+  async getDailyCount(userId: string, kind: 'requests', day: string) {
+    const count = this.dailyCounts.get(`${userId}|${kind}|${day}`);
+    return count ? { ...count } : null;
+  }
+
+  async putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null) {
+    const key = `${userId}|${kind}|${day}`;
+    if ((this.dailyCounts.get(key)?.version ?? null) !== expectedVersion) throw new PreconditionFailed();
+    this.dailyCounts.set(key, { ...count });
   }
 }

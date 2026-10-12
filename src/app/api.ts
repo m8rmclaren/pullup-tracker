@@ -1,5 +1,5 @@
 import { type PublicKeyCredentialCreationOptionsJSON, type PublicKeyCredentialRequestOptionsJSON, startAuthentication, startRegistration } from '@simplewebauthn/browser';
-import type { Account, ChallengeBoardResponse, ChallengeListItem, ChallengesResponse, FriendsResponse, LeaderboardResponse, ProfileViewResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
+import type { Account, ChallengeBoardResponse, Suggestion, ChallengeListItem, ChallengesResponse, FriendsResponse, LeaderboardResponse, ProfileViewResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
 import type { ProfilePatch } from '../shared/profile';
 import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
@@ -139,3 +139,11 @@ export const fetchChallengeBoard = (challengeId: string, token: string) => post<
 export const leaveChallenge = (challengeId: string, token: string) => post<object>('/api/challenges/leave', { challengeId }, token);
 
 export const fetchChallengeLink = (challengeId: string, token: string) => post<{ link: string }>('/api/challenges/link', { challengeId }, token);
+
+export const sendFriendRequest = (userId: string, challengeId: string, token: string) => post<{ status: 'requested' | 'friends' }>('/api/friends/request', { userId, challengeId }, token);
+
+export const respondToFriendRequest = (userId: string, accept: boolean, token: string) => post<object>('/api/friends/respond', { userId, accept }, token);
+
+export const cancelFriendRequest = (userId: string, token: string) => post<object>('/api/friends/cancel', { userId }, token);
+
+export const fetchSuggestions = (token: string) => post<{ suggestions: Suggestion[] }>('/api/friends/suggestions', {}, token);

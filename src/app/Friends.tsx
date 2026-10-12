@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { encode } from 'uqr';
-import { MAX_NAME_LENGTH, type Friend, type RedeemedLink, type ResolvedLink, cleanName } from '../shared/model';
-import { fetchFriends, isPasskeySupported, joinLink, passkeyErrorMessage, redeemLink, removeFriend, resolveLink, rotateFriendLink, shareUrl, signInWithPasskey, signUpWithPasskey } from './api';
+import { type ChallengeListItem, MAX_NAME_LENGTH, type Friend, type IncomingRequest, type RedeemedLink, type ResolvedLink, type Suggestion, cleanName } from '../shared/model';
+import { cancelFriendRequest, fetchChallenges, fetchFriends, fetchSuggestions, isPasskeySupported, joinLink, passkeyErrorMessage, redeemLink, removeFriend, resolveLink, respondToFriendRequest, rotateFriendLink, sendFriendRequest, shareUrl, signInWithPasskey, signUpWithPasskey } from './api';
 import { FriendsBoard } from './Board';
-import { ChallengesCard, GroupProgress, challengeExercise, formatWindow } from './Challenges';
+import { ChallengesCard, GroupProgress, challengeExercise, challengeLabel, formatWindow } from './Challenges';
 import { Sheet } from './sheets';
 import type { Tracker } from './tracker';
 
@@ -52,8 +52,19 @@ export function FriendsTab({ tracker, onOpenSettings, onOpenProfile, onOpenChall
   const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
   const [isConfirmingRotate, setIsConfirmingRotate] = useState(false);
 
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [challenges, setChallenges] = useState<ChallengeListItem[] | null>(null);
+  const [challengesError, setChallengesError] = useState<string | null>(null);
+  const incoming = tracker.account?.incomingRequests ?? [];
+  const incomingIds = new Set(incoming.map((request) => request.id));
+  const challengeById = new Map((challenges ?? []).map((item) => [item.challenge.id, item]));
   const refresh = async () => {
     if (!token) return;
+    fetchSuggestions(token).then((response) => setSuggestions(response.suggestions), () => {});
+    fetchChallenges(token).then(
+      (response) => setChallenges(response.challenges),
+      (fetchError) => setChallengesError(fetchError instanceof Error ? fetchError.message : String(fetchError)),
+    );
     try {
       const response = await fetchFriends(token);
       setFriends(response.friends);
@@ -96,6 +107,29 @@ export function FriendsTab({ tracker, onOpenSettings, onOpenProfile, onOpenChall
       setNote(removeError instanceof Error ? removeError.message : String(removeError));
     }
   };
+  const respond = async (request: IncomingRequest, accept: boolean) => {
+    try {
+      await respondToFriendRequest(request.id, accept, token);
+      tracker.dismissIncomingRequest(request.id);
+      if (accept) await refresh();
+    } catch (respondError) {
+      setNote(respondError instanceof Error ? respondError.message : String(respondError));
+    }
+  };
+  const changeSuggestion = async (suggestion: Suggestion) => {
+    try {
+      if (suggestion.request === 'sent') {
+        await cancelFriendRequest(suggestion.id, token);
+        setSuggestions((current) => current.map((other) => (other.id === suggestion.id ? { ...other, request: null } : other)));
+        return;
+      }
+      const { status } = await sendFriendRequest(suggestion.id, suggestion.challengeId, token);
+      if (status === 'friends') await refresh();
+      else setSuggestions((current) => current.map((other) => (other.id === suggestion.id ? { ...other, request: 'sent' } : other)));
+    } catch (changeError) {
+      setNote(changeError instanceof Error ? changeError.message : String(changeError));
+    }
+  };
   const rotate = async () => {
     setIsConfirmingRotate(false);
     try {
@@ -108,8 +142,33 @@ export function FriendsTab({ tracker, onOpenSettings, onOpenProfile, onOpenChall
 
   return (
     <div class="friends">
+      {incoming.length ? (
+        <section class="card">
+          <header class="card__head">
+            <h2>Friend requests</h2>
+          </header>
+          <ul class="people">
+            {incoming.map((request) => (
+              <li key={request.id}>
+                <span class="request-from">
+                  <span class="people__name">{request.name}</span>
+                  {challengeById.has(request.challengeId) ? <span class="muted small">from {challengeLabel(challengeById.get(request.challengeId)!, tracker)}</span> : null}
+                </span>
+                <span>
+                  <button type="button" class="btn-text" onClick={() => void respond(request, true)}>
+                    Accept
+                  </button>
+                  <button type="button" class="btn-text btn-text--quiet" onClick={() => void respond(request, false)}>
+                    Decline
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <FriendsBoard tracker={tracker} onOpenProfile={onOpenProfile} />
-      <ChallengesCard tracker={tracker} onOpenChallenge={onOpenChallenge} onCreate={onCreateChallenge} />
+      <ChallengesCard tracker={tracker} items={challenges} error={challengesError} onOpenChallenge={onOpenChallenge} onCreate={onCreateChallenge} />
       <section class="card">
         <header class="card__head">
           <h2>Friends</h2>
@@ -141,6 +200,32 @@ export function FriendsTab({ tracker, onOpenSettings, onOpenProfile, onOpenChall
           ))}
         </ul>
       </section>
+
+      {suggestions.some((suggestion) => !incomingIds.has(suggestion.id)) ? (
+        <section class="card">
+          <header class="card__head">
+            <h2>People from your challenges</h2>
+          </header>
+          <ul class="people">
+            {suggestions
+              .filter((suggestion) => !incomingIds.has(suggestion.id))
+              .map((suggestion) => (
+              <li key={suggestion.id}>
+                <span class="people__name">{suggestion.name}</span>
+                {suggestion.request === 'received' ? (
+                  <button type="button" class="btn-text" onClick={() => void respond({ id: suggestion.id, name: suggestion.name, challengeId: suggestion.challengeId }, true)}>
+                    Accept
+                  </button>
+                ) : (
+                  <button type="button" class={`btn-text${suggestion.request === 'sent' ? ' btn-text--quiet' : ''}`} aria-label={suggestion.request === 'sent' ? `Cancel request to ${suggestion.name}` : `Add ${suggestion.name}`} onClick={() => void changeSuggestion(suggestion)}>
+                    {suggestion.request === 'sent' ? 'Requested' : 'Add'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section class="card">
         <header class="card__head">

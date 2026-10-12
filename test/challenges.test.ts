@@ -168,7 +168,7 @@ describe('the challenge board', () => {
     expect(board).toMatchObject({ challenge: created.challenge, memberCount: 3, groupTotal: 11, definition: { id: STAIRS.id } });
     const byName = new Map(board.members.map((member) => [member.name, member]));
     expect(byName.get('Ben')).toMatchObject({ id: 'ben', isFriend: true, days: [{ day: '2026-10-12', sets: 1, reps: 2, bestSetReps: 2 }] });
-    expect(byName.get('Cat')).toEqual({ id: cat.account.id, name: 'Cat', isFriend: false, days: [{ day: '2026-10-13', sets: 1, reps: 5, bestSetReps: 5 }] });
+    expect(byName.get('Cat')).toEqual({ id: cat.account.id, name: 'Cat', isFriend: false, request: null, days: [{ day: '2026-10-13', sets: 1, reps: 5, bestSetReps: 5 }] });
     expect(byName.get('Ana')).toMatchObject({ isFriend: false, days: [{ day: '2026-10-02', reps: 4 }] });
     // No zone, goal, ring reps, holds, other exercises or days outside the window leave the server.
     const serialized = JSON.stringify(board);

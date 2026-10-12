@@ -312,8 +312,17 @@ link carries consent by being shared. Everywhere else, it's a request.
   in one transaction. **A request to someone who already requested you** accepts theirs.
 - **Declining is silent and final.** The receiver's side becomes a tombstone with
   `declinedAt`. The sender still sees "Requested", and sending again is a no-op. A cancel
-  by the sender deletes both sides, unless it's already a tombstone.
-- **At most 50 requests a day** per sender, counted like compose usage.
+  by the sender deletes both sides, unless it's already a tombstone: then only the sender's
+  side goes, and a later request re-writes just that side, so the sender sees "Requested"
+  again and the receiver sees nothing. Everything the sender can observe (the request's
+  answer, board and suggestion states) is the same before and after a decline.
+- **A request to someone who already requested you accepts theirs**, tombstone or not:
+  they asked, so both sides have consented.
+- **Leaving a challenge ends eligibility** through it, since leaving deletes the
+  membership. A challenge that has ended still counts.
+- **At most 50 requests a day** per sender, in the sender's own day: a `RQ#<day>` counter
+  read and put conditional on its `version` (the role can't UpdateItem), with a TTL two
+  days out. Only requests that write something count; the 51st is 429.
 - Incoming requests arrive in the sync response, so every client can badge Friends
   without a separate poll. Push is later.
 
@@ -404,7 +413,8 @@ worker loads the new code on its next launch.
 - Response: as today, plus `definitions`: every definition on your adopted list, plus any
   created id the returned entries reference. Exercises and variations share the array; the
   `x-`/`v-` prefix says which is which. `account` gains the new profile fields and
-  `incomingRequests: [{ id, name, challengeId }]`, without tombstones.
+  `incomingRequests: [{ id, name, challengeId }]`, without tombstones. (Only the sync
+  response carries it; `/api/profile` doesn't.)
 
 **`POST /api/profile`**: `{ name?, nameUpdatedAt?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,
 last-writer-wins per field; every value comes with its clock (`validation.json`'s
@@ -418,11 +428,15 @@ links get one too.
 or not the two were friends, so it can't probe for accounts.
 **`POST /api/friends/rotate-link`**: invalidates your old link, returns a new one.
 **`POST /api/friends/request`**: `{ userId, challengeId }` → `{ status: "requested" | "friends" }`.
-Idempotent. An ineligible target gets 404, so the endpoint can't probe for accounts.
-**`POST /api/friends/respond`**: `{ userId, accept }`.
-**`POST /api/friends/cancel`**: `{ userId }`.
-**`POST /api/friends/suggestions`**: `{}` → members of your challenges who aren't your
-friends, with the challenge you share and any request state.
+Idempotent. An ineligible target, yourself, a challenge you aren't in and an id that isn't
+an account all get the same 404, so the endpoint can't probe for accounts.
+**`POST /api/friends/respond`**: `{ userId, accept }` → `{ status: "friends" }` or `{}`; 404
+with no request from them.
+**`POST /api/friends/cancel`**: `{ userId }` → `{}`.
+**`POST /api/friends/suggestions`**: `{}` → `{ suggestions: [{ id, name, challengeId,
+request }] }`: members of your 20 most recent challenges who aren't your friends, with the
+most recent challenge you share and `request`: `"sent"` (even after a silent decline),
+`"received"` (only while live) or `null`. Challenge board members carry the same `request`.
 
 **`POST /api/links/resolve`** (unauthenticated): `{ code }` → `{ kind, inviterName,
 challenge?: { definition, fromDay, toDay, target, memberCount, groupTotal } }`, enough for
