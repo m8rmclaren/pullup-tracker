@@ -32,3 +32,9 @@ variable "lambda_reserved_concurrency" {
   type        = number
   default     = -1
 }
+
+variable "signup_open" {
+  description = "Whether anyone can create an account. Every passkey binds to domain_name for good, so keep this false until the app is on its final domain."
+  type        = bool
+  default     = false
+}

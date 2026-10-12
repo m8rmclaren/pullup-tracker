@@ -1,10 +1,10 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { type Entry, type InviteKind, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_NAME_LENGTH, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, clampAddedWeight, cleanName, exerciseIdOf, formatAddedWeight, isValidEntry } from '../shared/model';
+import { type Entry, type PasskeySummary, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_NAME_LENGTH, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, clampAddedWeight, cleanName, exerciseIdOf, formatAddedWeight, isValidEntry } from '../shared/model';
 import { MIN_DAILY_GOAL_REPS } from '../shared/profile';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallClockToEpochMs } from '../shared/time';
-import { createInvite, inviteLink, join, parseInviteLink } from './api';
+import { addPasskey, createDeviceLink, deviceLink, isPasskeySupported, listPasskeys, parseDeviceLink, passkeyErrorMessage, redeemDeviceLink, signInWithPasskey, signUpWithPasskey } from './api';
 import { exerciseLabel, formatAmount, formatHoldSeconds, unitLookup } from './labels';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
@@ -264,16 +264,10 @@ const STATUS_TEXT: Record<Tracker['status'], string> = {
   unconfigured: 'Not signed in — sets stay on this device',
 };
 
-export interface PendingInvite {
-  kind: InviteKind;
-  code: string;
-}
-
-export function JoinSheet({ tracker, invite, onClose }: { tracker: Tracker; invite: PendingInvite; onClose: () => void }) {
-  const [name, setName] = useState('');
+/** Signs this device into the account a device link belongs to. */
+export function DeviceLinkSheet({ tracker, code, onClose }: { tracker: Tracker; code: string; onClose: () => void }) {
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isFriendInvite = invite.kind === 'friend';
   const currentAccount = tracker.settings.token ? tracker.account : null;
 
   const submit = async (event: Event) => {
@@ -281,7 +275,7 @@ export function JoinSheet({ tracker, invite, onClose }: { tracker: Tracker; invi
     setIsBusy(true);
     setError(null);
     try {
-      const response = await join({ code: invite.code, name: isFriendInvite ? name : undefined, timeZone: tracker.deviceTimeZone });
+      const response = await redeemDeviceLink(code);
       tracker.signIn(response.token, response.account);
       void tracker.syncNow();
       onClose();
@@ -292,24 +286,14 @@ export function JoinSheet({ tracker, invite, onClose }: { tracker: Tracker; invi
   };
 
   return (
-    <Sheet title={isFriendInvite ? 'Join' : 'Sign in this device'} onClose={onClose}>
+    <Sheet title="Sign in this device" onClose={onClose}>
       <form onSubmit={(event) => void submit(event)}>
-        <p class="muted">
-          {isFriendInvite
-            ? "You've been invited. Pick the name others will see on the board."
-            : 'This link signs this device into your account. Sets already logged here are added to it.'}
-        </p>
+        <p class="muted">This link signs this device into your account. Sets already logged here are added to it.</p>
         {currentAccount ? <p class="muted small">This device is signed in as {currentAccount.name}; continuing switches it.</p> : null}
-        {isFriendInvite ? (
-          <label class="field">
-            <span>Your name</span>
-            <input type="text" maxLength={MAX_NAME_LENGTH} autocomplete="nickname" value={name} onInput={(event) => setName((event.target as HTMLInputElement).value)} />
-          </label>
-        ) : null}
         {error ? <p class="muted small">{error}</p> : null}
         <div class="sheet__actions">
-          <button type="submit" class="btn btn--primary" disabled={isBusy || (isFriendInvite && !name.trim())}>
-            {isBusy ? 'Joining…' : isFriendInvite ? 'Join' : 'Sign in'}
+          <button type="submit" class="btn btn--primary" disabled={isBusy}>
+            {isBusy ? 'Signing in…' : 'Sign in'}
           </button>
         </div>
       </form>
@@ -317,22 +301,104 @@ export function JoinSheet({ tracker, invite, onClose }: { tracker: Tracker; invi
   );
 }
 
-const INVITE_NOTE: Record<InviteKind, string> = {
-  friend: 'Works once and expires in 7 days.',
-  device: 'Open it on your other device within 15 minutes. On iPhone, paste it under Settings in the home-screen app, not Safari.',
-};
-
-function AccountSection({ tracker, onOpenInvite }: { tracker: Tracker; onOpenInvite: (invite: PendingInvite) => void }) {
-  const [createdLink, setCreatedLink] = useState<{ kind: InviteKind; url: string } | null>(null);
+/** Signed out: make an account with a name and a passkey, or sign in with one. */
+function SignedOutSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onOpenDeviceLink: (code: string) => void }) {
+  const [name, setName] = useState('');
   const [pastedLink, setPastedLink] = useState('');
+  const [busyAction, setBusyAction] = useState<'signup' | 'signin' | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const token = tracker.settings.token;
+  const cleanedName = cleanName(name);
 
-  const createLink = async (kind: InviteKind) => {
+  const signInWith = async (action: 'signup' | 'signin') => {
+    setBusyAction(action);
     setNote(null);
     try {
-      const response = await createInvite(kind, token);
-      setCreatedLink({ kind, url: inviteLink(kind, response.code) });
+      const response = action === 'signup' ? await signUpWithPasskey(cleanedName!, tracker.deviceTimeZone) : await signInWithPasskey();
+      tracker.signIn(response.token, response.account);
+      void tracker.syncNow();
+    } catch (error) {
+      setNote(passkeyErrorMessage(error));
+    }
+    setBusyAction(null);
+  };
+  const openPastedLink = () => {
+    const code = parseDeviceLink(pastedLink);
+    if (code) onOpenDeviceLink(code);
+    else setNote("That doesn't look like a device link.");
+  };
+
+  return (
+    <>
+      {isPasskeySupported() ? (
+        <>
+          <p class="muted small">An account is a name and a passkey: Face ID, a fingerprint or your device's PIN. No email, no password. Your passkey syncs through your password manager, so a new phone signs straight back in. Lose every device and the password manager, and the account is gone.</p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (cleanedName) void signInWith('signup');
+            }}
+          >
+            <label class="field">
+              <span>Your name</span>
+              <input type="text" maxLength={MAX_NAME_LENGTH} autocomplete="nickname" value={name} onInput={(event) => setName((event.target as HTMLInputElement).value)} />
+            </label>
+            <div class="sheet__actions sheet__actions--inline">
+              <button type="submit" class="btn btn--primary" disabled={!cleanedName || busyAction !== null}>
+                {busyAction === 'signup' ? 'Creating…' : 'Create account'}
+              </button>
+              <button type="button" class="btn" disabled={busyAction !== null} onClick={() => void signInWith('signin')}>
+                {busyAction === 'signin' ? 'Signing in…' : 'Sign in with a passkey'}
+              </button>
+            </div>
+          </form>
+        </>
+      ) : (
+        <p class="muted small">This browser can't use passkeys. Open a device link from another of your devices to sign in here.</p>
+      )}
+      <label class="field">
+        <span>Or paste a device link</span>
+        <div class="token-row">
+          <input type="text" autocomplete="off" autocapitalize="off" spellcheck={false} value={pastedLink} onInput={(event) => setPastedLink((event.target as HTMLInputElement).value)} />
+          <button type="button" class="btn-text" onClick={openPastedLink} disabled={!pastedLink.trim()}>
+            Use
+          </button>
+        </div>
+      </label>
+      {note ? <p class="muted small">{note}</p> : null}
+    </>
+  );
+}
+
+function SignedInSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onOpenDeviceLink: (code: string) => void }) {
+  const token = tracker.settings.token;
+  const [passkeys, setPasskeys] = useState<PasskeySummary[] | null>(null);
+  const [createdLink, setCreatedLink] = useState<string | null>(null);
+  const [pastedLink, setPastedLink] = useState('');
+  const [isAddingPasskey, setIsAddingPasskey] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    listPasskeys(token).then(
+      (response) => setPasskeys(response.passkeys),
+      () => setPasskeys(null),
+    );
+  }, [token]);
+
+  const addThisDevicesPasskey = async () => {
+    setIsAddingPasskey(true);
+    setNote(null);
+    try {
+      setPasskeys((await addPasskey(token)).passkeys);
+      setNote('Passkey added. Wiping this browser or getting a new phone now signs straight back in.');
+    } catch (error) {
+      setNote(passkeyErrorMessage(error));
+    }
+    setIsAddingPasskey(false);
+  };
+  const createLink = async () => {
+    setNote(null);
+    try {
+      setCreatedLink(deviceLink((await createDeviceLink(token)).code));
     } catch (error) {
       setNote(error instanceof Error ? error.message : String(error));
     }
@@ -340,51 +406,63 @@ function AccountSection({ tracker, onOpenInvite }: { tracker: Tracker; onOpenInv
   const shareLink = async () => {
     if (!createdLink) return;
     try {
-      if (navigator.share) await navigator.share({ url: createdLink.url });
+      if (navigator.share) await navigator.share({ url: createdLink });
       else {
-        await navigator.clipboard.writeText(createdLink.url);
+        await navigator.clipboard.writeText(createdLink);
         setNote('Copied.');
       }
     } catch {}
   };
   const openPastedLink = () => {
-    const invite = parseInviteLink(pastedLink);
-    if (invite) onOpenInvite(invite);
-    else setNote("That doesn't look like an invite or device link.");
+    const code = parseDeviceLink(pastedLink);
+    if (code) onOpenDeviceLink(code);
+    else setNote("That doesn't look like a device link.");
   };
 
   return (
     <>
-      {token ? (
+      <p>
+        Signed in as <b>{tracker.accountName() ?? '…'}</b>
+      </p>
+      {passkeys ? (
+        passkeys.length ? (
+          <ul class="passkeys">
+            {passkeys.map((passkey) => (
+              <li key={passkey.credentialId}>
+                <span>{passkey.label ?? 'Passkey'}</span>
+                <span class="muted small">added {formatDay(dayKey(passkey.createdAt, tracker.timeZone()), { year: true })}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p class="muted small">No passkey yet. Add one so this account can sign back in after a wipe or on a new phone.</p>
+        )
+      ) : null}
+      <div class="sheet__actions sheet__actions--inline">
+        {isPasskeySupported() ? (
+          <button type="button" class="btn" disabled={isAddingPasskey} onClick={() => void addThisDevicesPasskey()}>
+            {isAddingPasskey ? 'Adding…' : 'Add a passkey'}
+          </button>
+        ) : null}
+        <button type="button" class="btn" onClick={() => void createLink()}>
+          Add another device
+        </button>
+      </div>
+      {createdLink ? (
         <>
-          <p>
-            Signed in as <b>{tracker.accountName() ?? '…'}</b>
-          </p>
-          <div class="sheet__actions sheet__actions--inline">
-            <button type="button" class="btn" onClick={() => void createLink('friend')}>
-              Invite a friend
-            </button>
-            <button type="button" class="btn" onClick={() => void createLink('device')}>
-              Add another device
-            </button>
+          <div class="field">
+            <div class="token-row">
+              <input type="text" readOnly aria-label="Link to send" value={createdLink} onFocus={(event) => (event.target as HTMLInputElement).select()} />
+              <button type="button" class="btn-text" onClick={() => void shareLink()}>
+                {'share' in navigator ? 'Share' : 'Copy'}
+              </button>
+            </div>
           </div>
-          {createdLink ? (
-            <>
-              <div class="field">
-                <div class="token-row">
-                  <input type="text" readOnly aria-label="Link to send" value={createdLink.url} onFocus={(event) => (event.target as HTMLInputElement).select()} />
-                  <button type="button" class="btn-text" onClick={() => void shareLink()}>
-                    {'share' in navigator ? 'Share' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-              <p class="muted small">{INVITE_NOTE[createdLink.kind]}</p>
-            </>
-          ) : null}
+          <p class="muted small">Open it on your other device within 15 minutes. On iPhone, paste it under Settings in the home-screen app, not Safari.</p>
         </>
       ) : null}
       <label class="field">
-        <span>{token ? 'Have a link for another account?' : 'Paste an invite or device link'}</span>
+        <span>Have a device link for another account?</span>
         <div class="token-row">
           <input type="text" autocomplete="off" autocapitalize="off" spellcheck={false} value={pastedLink} onInput={(event) => setPastedLink((event.target as HTMLInputElement).value)} />
           <button type="button" class="btn-text" onClick={openPastedLink} disabled={!pastedLink.trim()}>
@@ -462,7 +540,7 @@ async function reloadIntoLatestVersion(): Promise<void> {
   location.reload();
 }
 
-export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tracker; onClose: () => void; onOpenInvite: (invite: PendingInvite) => void }) {
+export function SettingsSheet({ tracker, onClose, onOpenDeviceLink }: { tracker: Tracker; onClose: () => void; onOpenDeviceLink: (code: string) => void }) {
   const [dataMessage, setDataMessage] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -525,7 +603,7 @@ export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tra
 
       <section class="settings-sec">
         <h3>Account</h3>
-        <AccountSection tracker={tracker} onOpenInvite={onOpenInvite} />
+        {tracker.settings.token ? <SignedInSection tracker={tracker} onOpenDeviceLink={onOpenDeviceLink} /> : <SignedOutSection tracker={tracker} onOpenDeviceLink={onOpenDeviceLink} />}
       </section>
 
       {tracker.settings.token ? (

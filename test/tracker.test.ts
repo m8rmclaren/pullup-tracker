@@ -177,6 +177,29 @@ describe('Tracker', () => {
     expect(storedEntry(db, entry.id)!.reps).toBe(6);
   });
 
+  it('signing in as a different account drops the old one’s synced sets and keeps unsynced ones', async () => {
+    const { tracker } = makeTracker(serverTransport(db));
+    const synced = tracker.add(6);
+    await tracker.syncNow();
+    tracker.createExercise({ name: 'Stairs', measure: 'count', unit: 'lap' });
+    await tracker.syncNow();
+    const unsynced = tracker.add(4);
+
+    tracker.signIn('other-account-token', { id: 'u2', name: 'Other', timeZone: 'Europe/London' });
+    expect(tracker.allEntries().map((entry) => entry.id)).toEqual([unsynced.id]);
+    expect(tracker.allDefinitions()).toEqual([]);
+    expect(tracker.getEntry(synced.id)).toBeUndefined();
+    expect(tracker.pendingCount()).toBe(1);
+  });
+
+  it('signing back into the same account keeps everything', async () => {
+    const { tracker } = makeTracker(serverTransport(db));
+    const synced = tracker.add(6);
+    await tracker.syncNow();
+    tracker.signIn('new-device-token', ACCOUNT);
+    expect(tracker.getEntry(synced.id)).toEqual(synced);
+  });
+
   it('an undo before the first sync still reaches the server as a tombstone', async () => {
     const { tracker } = makeTracker(serverTransport(db));
     const entry = tracker.add(5);

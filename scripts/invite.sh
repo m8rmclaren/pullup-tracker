@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Admin access to accounts. Day to day, people invite each other from Settings in the app;
-# this is for the first invite, recovering a lost account, and revoking access.
+# Admin access to accounts. People sign up in the app with a name and a passkey; this is for
+# recovering an account whose every device and passkey is lost, and for revoking access.
 #
-#   scripts/invite.sh new               print a single-use invite link for a new person (7 days)
 #   scripts/invite.sh device <userId>   print a link that signs a device into <userId> (15 min)
 #   scripts/invite.sh users             list accounts
-#   scripts/invite.sh revoke <userId>   sign every device of <userId> out (takes effect within a minute)
+#   scripts/invite.sh revoke <userId>   sign every device of <userId> out and delete its passkeys
+#                                       (devices stop syncing within a minute)
 #
 # Only SHA-256 digests of codes and tokens are stored. Needs the AWS CLI and openssl (AWS
 # CloudShell has both). Set TABLE if you changed the Terraform `name` variable, and APP_URL
@@ -39,13 +39,6 @@ put_invite() {
 }
 
 case "${1:-}" in
-  new)
-    url=$(app_url)
-    code=$(put_invite friend $(( 7 * 86400 )))
-    echo "Invite link (single use, expires in 7 days):"
-    echo
-    echo "  $url/#join=$code"
-    ;;
   device)
     user_id="${2:?usage: invite.sh device <userId>}"
     [[ "$user_id" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "bad userId" >&2; exit 1; }
@@ -64,18 +57,31 @@ case "${1:-}" in
     ;;
   revoke)
     user_id="${2:?usage: invite.sh revoke <userId>}"
-    keys=$(aws dynamodb scan --table-name "$table" --filter-expression "sk = :t AND userId = :u" \
+    [[ "$user_id" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "bad userId" >&2; exit 1; }
+    # Tokens issued before passkeys have no item on the user's side, so those are found by scan.
+    token_keys=$(aws dynamodb scan --table-name "$table" --filter-expression "sk = :t AND userId = :u" \
       --expression-attribute-values "{\":t\":{\"S\":\"T\"},\":u\":{\"S\":\"$user_id\"}}" \
       --query 'Items[].pk.S' --output text | tr '\t' '\n' | grep . || true)
     revoked_count=0
-    for pk in $keys; do
+    for pk in $token_keys; do
       aws dynamodb delete-item --table-name "$table" --key "{\"pk\":{\"S\":\"$pk\"},\"sk\":{\"S\":\"T\"}}"
       revoked_count=$((revoked_count + 1))
     done
-    echo "signed out $revoked_count device(s) of $user_id"
+    # Passkeys (K#) and the user-side copies of tokens (T#), so no passkey can sign back in.
+    deleted_passkeys=0
+    for prefix in K T; do
+      sort_keys=$(aws dynamodb query --table-name "$table" --key-condition-expression "pk = :pk AND begins_with(sk, :prefix)" \
+        --expression-attribute-values "{\":pk\":{\"S\":\"U#$user_id\"},\":prefix\":{\"S\":\"$prefix#\"}}" \
+        --query 'Items[].sk.S' --output text | tr '\t' '\n' | grep . || true)
+      for sk in $sort_keys; do
+        aws dynamodb delete-item --table-name "$table" --key "{\"pk\":{\"S\":\"U#$user_id\"},\"sk\":{\"S\":\"$sk\"}}"
+        [[ "$prefix" == K ]] && deleted_passkeys=$((deleted_passkeys + 1))
+      done
+    done
+    echo "signed out $revoked_count device(s) of $user_id and deleted $deleted_passkeys passkey(s)"
     ;;
   *)
-    sed -n '2,13p' "$0"
+    sed -n '2,12p' "$0"
     exit 1
     ;;
 esac

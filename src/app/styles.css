@@ -1207,3 +1207,17 @@ input:focus-visible {
     transition: none !important;
   }
 }
+
+.passkeys {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.passkeys li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}

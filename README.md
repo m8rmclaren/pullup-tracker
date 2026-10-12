@@ -19,13 +19,13 @@ trends live one tab over.
 │ outbox + sync loop   │           │                        │ OAC/SigV4┌──────────────────┐   ┌──────────────────────┐
 │ service worker       │──────────▶│  /api/*  (no cache)    │─────────▶│ Lambda (Function │──▶│ DynamoDB: one table  │
 └──────────────────────┘ /api/sync └────────────────────────┘          │ URL, AWS_IAM)    │   │ users, sets, day     │
-   X-Pullup-Token header  /api/join                                    └──────────────────┘   │ totals, tokens,      │
-   (one per device)       /api/invite                                                         │ invites  (PITR on)   │
+   X-Pullup-Token header  /api/signup*                                 └──────────────────┘   │ totals, tokens,      │
+   (one per device)       /api/passkey/*                                                      │ passkeys (PITR on)   │
                                                                                               └──────────────────────┘
 ```
 
-Each person has their own account and log. People join by invite link, and every set
-also feeds per-day totals that a leaderboard can read in one query.
+Each person has their own account and log, made with a name and a passkey. Every set also
+feeds per-day totals that a leaderboard can read in one query.
 
 ## Deploy
 
@@ -66,15 +66,16 @@ tick the IAM acknowledgement.) If the account already has a GitHub OIDC provider
 **3. Deploy.** Actions → pipeline → **Run workflow** (or push to `main`). The run summary
 prints the app URL. Until the variables exist, the deploy job is skipped, not failed.
 
-**4. Invite yourself.** In CloudShell, upload `scripts/invite.sh` and run
-`bash invite.sh new`. It prints a single-use link. On iPhone, open the app URL in Safari,
-**Share → Add to Home Screen**, then open the home-screen app and paste the link under
-**Settings → Account**. A home-screen app keeps its own storage, apart from Safari's. On
-Android or desktop, just open the link and install the app afterwards.
+**4. Make your account.** Passkeys need the custom domain (below), because each one is
+bound to it for good. Sign-up is closed until you open it: set the repository variable
+`SIGNUP_OPEN` to `true` and deploy. On iPhone, open the app URL in Safari, **Share → Add to
+Home Screen**, then in the home-screen app go to **Settings → Account**, enter a name and
+tap **Create account**. Face ID makes the passkey. Set `SIGNUP_OPEN` back to `false` if
+nobody else should sign up yet.
 
-From then on, everything happens inside the app. **Settings → Invite a friend** makes a
-link for a new person, and **Add another device** makes a 15-minute link that signs another
-device into your own account.
+From then on, everything happens inside the app. **Sign in with a passkey** signs any device
+into your account, including after Safari's storage is wiped. **Add another device** makes
+a 15-minute link for a device that can't use your passkey.
 
 After that, merging to `main` is the deploy. An installed app picks up a new version the
 next time it opens: the new service worker takes over in the background, and the page
@@ -104,7 +105,7 @@ scripts/deploy.sh --site     # skip terraform; just rebuild and upload the site
 
 This uses the same remote state as CI, so the two never disagree.
 
-**Custom domain** (optional): the domain's zone must be a Route 53 public hosted zone, with
+**Custom domain** (needed for passkeys, so for accounts): the domain's zone must be a Route 53 public hosted zone, with
 its name servers set at the registrar. Set the repository variables `DOMAIN_NAME` (e.g.
 `pullups.example.com`) and `DNS_ZONE_NAME` (`example.com`), and pass the matching
 `DnsZoneId` and `DomainName` to the bootstrap stack so the deploy role may edit just those
@@ -120,20 +121,37 @@ There are two independent locks on the API, and no AWS credential ever reaches a
    request with SigV4 through Origin Access Control. Hitting the raw `*.lambda-url…` host
    directly returns 403. (For POST bodies OAC needs the payload hash, so the client sends
    `x-amz-content-sha256`; that's computed with WebCrypto and isn't a secret.)
-2. **Only members get past the Lambda.** Every request to `/api/sync`, `/api/profile` and
-   `/api/invite` carries `X-Pullup-Token`, a 256-bit random token issued to that one device
-   when it redeemed an invite. The table stores only its SHA-256 digest (`T#<digest>` → user id),
-   so a leaked table backup grants no access. The Lambda caches lookups for a minute.
+2. **Only members get past the Lambda.** Every authenticated request carries
+   `X-Pullup-Token`, a 256-bit random session token issued to that one device when it signed
+   in. The table stores only its SHA-256 digest (`T#<digest>` → user id), so a leaked table
+   backup grants no access. The Lambda caches lookups for a minute.
 
 A custom header is used instead of `Authorization` because OAC replaces `Authorization`
 with its own signature on the way to the origin.
 
-**Invites.** `POST /api/join { code, name, timeZone }` is the only unauthenticated route. Codes are
-256-bit, single-use, and also stored only as digests. Redeeming one is a single DynamoDB
-transaction: it deletes the invite (conditional on it still existing), creates the device
-token and, for a friend invite, the new user. Two people racing for one link can't both
-win. Friend invites last 7 days and device links 15 minutes. Expiry is checked on redeem;
-DynamoDB TTL only tidies up later.
+**Passkeys.** An account is a display name and one or more passkeys, with no email and no
+password. Sign-up is `/api/signup/options` (the server makes a user id and a challenge that
+holds the name and zone) then `/api/signup`, which verifies the new passkey with
+`@simplewebauthn/server` (attestation `none`, user verification required) and writes the
+profile, the passkey and the device's session token in one transaction, so no account
+exists without a passkey. **Sign in with a passkey** asks for any discoverable passkey on
+the domain; the response carries the user id as its user handle, which finds the stored
+public key. A signed-in device can add more passkeys, which is how an account from before
+passkeys gets its first. Challenges are 32 random bytes, stored as digests for 5 minutes and
+consumed by a conditional delete, so a response can't be replayed.
+
+Every passkey belongs to the relying-party id, the custom domain (`RP_ID`, set from
+`domain_name`). Without a custom domain passkeys are off, rather than bound to a
+cloudfront.net name. **Sign-up is closed** unless the Terraform variable `signup_open` is
+true (the `SIGNUP_OPEN` repository variable): a passkey can't move to a new domain, so
+nobody but the operator should register one before the app is on its final domain.
+
+**Device links.** `POST /api/join { code }` redeems a single-use, 15-minute link that signs
+a device into the account that made it, for a device that can't use the passkey. Redeeming
+is one transaction that deletes the link (conditional on it still existing) and creates the
+token, so two devices racing for one link can't both win. Expiry is checked on redeem;
+DynamoDB TTL only tidies up later. The friend invites that once made new accounts are
+retired; one still outstanding is refused.
 
 The site bucket is fully private (Block Public Access, owner-enforced objects). The
 Lambda's role can only read and write items in the one table.
@@ -144,14 +162,13 @@ Run these from AWS CloudShell (upload `scripts/invite.sh`) or anywhere else that
 credentials. They need only the AWS CLI and openssl.
 
 ```sh
-scripts/invite.sh new            # a friend-invite link (when no one is signed in yet)
 scripts/invite.sh users          # list accounts: id and name
-scripts/invite.sh device <id>    # lost every device? a link back into that account
-scripts/invite.sh revoke <id>    # sign every device of that account out
+scripts/invite.sh device <id>    # lost every device and passkey? a link back into that account
+scripts/invite.sh revoke <id>    # sign every device of that account out and delete its passkeys
 ```
 
 A revoked device stops syncing within 60 seconds and shows **Signed out**. It keeps
-logging locally, and those sets are pushed once it signs in again with a device link.
+logging locally, and those sets are pushed once it signs in again.
 
 ## Data layout and sync
 
@@ -165,8 +182,12 @@ top of `src/lambda/dynamodb.ts`:
 | `U#<userId>` | `D#2026-10-08` | that user's day total: ring reps, sets, best set, hold seconds, and the same per exercise (`byExercise`) |
 | `U#<userId>` | `A#<key>` | a created exercise or variation that user made or logs to |
 | `X#<exerciseId>` | `X` / `V#<variationId>` | a created exercise, or a variation on an exercise |
-| `T#<digest>` | `T` | device token → user id |
-| `I#<digest>` | `I` | pending invite |
+| `U#<userId>` | `K#<credentialId>` | a passkey: public key, sign count, label |
+| `U#<userId>` | `T#<digest>` | a session token, from the account's side |
+| `T#<digest>` | `T` | session token → user id |
+| `I#<digest>` | `I` | pending device link |
+| `C#<digest>` | `C` | pending WebAuthn challenge |
+| `W#<day>` | `U#<userId>` | when the empty-account sweep looks at an account |
 
 Each set is stored as:
 
@@ -237,21 +258,23 @@ in the last 35 days.
   on the following launch. Every tap is already saved, so the reload loses nothing.
 - The pill in the top right always says where things stand: *Synced*, *3 pending*,
   *Offline · 3*, *Signed out*, or *Sign in*.
-- **Logging works before you join.** Sets logged without an account stay on the device,
-  and they're pushed to your account the moment you redeem an invite or device link.
+- **Logging works before you sign in.** Sets logged without an account stay on the device,
+  and they're pushed to your account the moment you sign up or sign in. Signing in as a
+  different account than before drops the old account's synced sets from the device.
 
-If `localStorage` is wiped, a device link from another of your devices (or from
-`invite.sh device`) pulls the full history back. Anything that never synced before the
+If `localStorage` is wiped, **Sign in with a passkey** (or a device link from another of
+your devices, or from `invite.sh device`) pulls the full history back. Anything that never synced before the
 wipe is gone, which is why the outbox count is always visible.
 
 ## Design decisions
 
-**Invite links + per-device tokens, not Cognito or Sign in with Google.** Everyone on the
-board is someone a member invited, so there's nothing to recover a password for. A lost
-device is fixed with a device link from another device, or from `invite.sh device`. This
-keeps the browser side to one header, and the API stays a Function URL behind CloudFront
-OAC: it costs nothing idle, it's same-origin (no CORS), and all merge logic runs
-server-side where conditional writes make it race-free.
+**Passkeys + per-device tokens, not Cognito or Sign in with Google.** No email or password
+exists to collect, leak or reset, and a passkey syncs through iCloud Keychain or Google
+Password Manager, so a new phone signs straight back in. Someone who loses every device and
+their password manager can be let back in with `invite.sh device`. This keeps the browser
+side to one header, and the API stays a Function URL behind CloudFront OAC: it costs nothing
+idle, it's same-origin (no CORS), and all merge logic runs server-side where conditional
+writes make it race-free.
 
 **DynamoDB, not S3.** This started as one JSON file per month in S3, which was ideal for a
 single person. A leaderboard needs totals across users, which in S3 means reading every
@@ -326,8 +349,9 @@ because new AWS accounts often can't reserve concurrency.
 ```sh
 npm install
 npm run dev        # builds, then serves on http://localhost:5173 with the real API handler
-                   # over an in-memory db saved to .devdata/; prints a join link and a
-                   # device link for the seeded "Dev" account
+                   # over an in-memory db saved to .devdata/, sign-up open; prints a device
+                   # link for the seeded "Dev" account. Passkeys need a domain, so they work
+                   # on localhost but not on 127.0.0.1.
 npm test           # vitest (DynamoDB adapter tests skip without DYNAMODB_ENDPOINT)
 
 docker run --rm -p 8000:8000 amazon/dynamodb-local
@@ -357,11 +381,18 @@ totals were generated by the v1 code and are never regenerated.
 - `test/server-sync.test.ts`: the v1 golden history's stored day totals, delta sync and
   the cursor lag (including a write that commits after a later sync started), day totals through edits, deletes and moves, healing
   a total on retry, **12 concurrent writers losing nothing**, concurrent edit vs. delete,
-  stale recomputes, the protocol gate, v2 fields end to end, per-user isolation, friend invites and device links (single-use,
+  stale recomputes, the protocol gate, v2 fields end to end, per-user isolation, device links (single-use,
   expiry), and bad input.
+- `test/passkeys.test.ts`: sign-up, sign-in and adding passkeys through the real router and
+  real WebAuthn verification, driven by a software authenticator (`test/softAuthenticator.ts`:
+  P-256 keys, CBOR attestation objects, signed assertions). It covers wrong origins and
+  domains, missing user verification, replays, expired and cross-purpose challenges, forged
+  signatures, a counting security key and a cloned one, closed sign-up, the operator's
+  pre-passkey account getting its first passkey, and retired friend invites.
 - `test/dynamodb.test.ts`: the DynamoDB adapter against DynamoDB Local. It covers the
   v1 golden history, the conditional puts, both LSIs across query pages, the month GSI,
-  concurrent syncs, and three people racing to redeem one invite.
+  concurrent syncs, three devices racing to redeem one device link or take one challenge,
+  account creation, and passkey sign-up and sign-in through the router.
 - `test/definitions.test.ts`: created exercises and variations through `/api/sync`: made
   offline and logged to in one push, reaching other devices, staying private until logged
   to, creator-only renames, fixed measure and unit, and the measure check.
@@ -371,7 +402,7 @@ totals were generated by the v1 code and are never regenerated.
 - `test/tracker.test.ts`: the client replica. It covers persistence before network,
   debounced batching, an edit during an in-flight push, two devices converging after
   offline edit/delete conflicts, a fresh device pulling history, the cursor and its reset
-  on account change, sets logged before joining, undo before first sync, backoff,
+  on account change, dropping another account's synced sets on a switch, sets logged before joining, undo before first sync, backoff,
   stopping when signed out or turned away by the protocol gate, and editing a v2 set
   without losing the fields this UI doesn't show.
 - `test/handler.test.ts`: the Lambda entrypoint. It covers Function URL events, base64
@@ -381,7 +412,7 @@ totals were generated by the v1 code and are never regenerated.
 
 ```
 src/shared/   time.ts (calendar in any zone), model.ts (entries + CRDT merge), stats.ts
-src/lambda/   handler.ts → http.ts (routes) → sync.ts (merge + day totals), accounts.ts (invites)
+src/lambda/   handler.ts → http.ts (routes) → sync.ts (merge + day totals), passkeys.ts, accounts.ts (device links)
               → db.ts (interface + in-memory) / dynamodb.ts
 src/app/      tracker.ts (local replica + sync engine), api.ts, App/Today/Trends/sheets/charts, sw.ts
 src/dev/      local server used by `npm run dev`

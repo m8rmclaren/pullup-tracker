@@ -1,4 +1,5 @@
-import type { Account, InviteKind, InviteResponse, JoinRequest, JoinResponse, SyncRequest, SyncResponse } from '../shared/model';
+import { type PublicKeyCredentialCreationOptionsJSON, type PublicKeyCredentialRequestOptionsJSON, startAuthentication, startRegistration } from '@simplewebauthn/browser';
+import type { Account, InviteResponse, PasskeySummary, SessionResponse, SyncRequest, SyncResponse } from '../shared/model';
 import type { ProfilePatch } from '../shared/profile';
 import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
@@ -42,15 +43,54 @@ export const fetchTransport: Transport = (request: SyncRequest, token: string) =
 
 export const profileTransport: ProfileTransport = (patch: ProfilePatch, token: string) => post<Account>('/api/profile', patch, token);
 
-export const join = (request: JoinRequest) => post<JoinResponse>('/api/join', request);
+export const redeemDeviceLink = (code: string) => post<SessionResponse>('/api/join', { code });
 
-export const createInvite = (kind: InviteKind, token: string) => post<InviteResponse>('/api/invite', { kind }, token);
+export const createDeviceLink = (token: string) => post<InviteResponse>('/api/invite', { kind: 'device' }, token);
 
-/** The link a recipient opens. The kind rides in the fragment so the join screen knows whether to ask for a name. */
-export const inviteLink = (kind: InviteKind, code: string) => `${location.origin}/#${kind === 'friend' ? 'join' : 'device'}=${code}`;
+/** The link another of your devices opens to sign in. */
+export const deviceLink = (code: string) => `${location.origin}/#device=${code}`;
 
-/** Reads an invite out of a link (or a bare fragment); null if it isn't one. */
-export function parseInviteLink(text: string): { kind: InviteKind; code: string } | null {
-  const match = /#(join|device)=([A-Za-z0-9_-]{16,256})\s*$/.exec(text.trim());
-  return match ? { kind: match[1] === 'join' ? 'friend' : 'device', code: match[2]! } : null;
+/** Reads a device link's code out of a link (or a bare fragment); null if it isn't one. */
+export function parseDeviceLink(text: string): string | null {
+  return /#device=([A-Za-z0-9_-]{16,256})\s*$/.exec(text.trim())?.[1] ?? null;
+}
+
+export const isPasskeySupported = () => typeof window.PublicKeyCredential === 'function';
+
+/** A name for this device's passkey and session, so a list of them reads as "iPhone", "Mac". */
+function deviceLabel(): string {
+  const userAgent = navigator.userAgent;
+  for (const [pattern, label] of [[/iPhone/, 'iPhone'], [/iPad/, 'iPad'], [/Android/, 'Android'], [/Macintosh/, 'Mac'], [/Windows/, 'Windows'], [/CrOS/, 'Chromebook'], [/Linux/, 'Linux']] as const) {
+    if (pattern.test(userAgent)) return label;
+  }
+  return 'Browser';
+}
+
+/** Makes an account: the server holds the name while this device creates a passkey for it. */
+export async function signUpWithPasskey(name: string, timeZone: string): Promise<SessionResponse> {
+  const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>('/api/signup/options', { name, timeZone });
+  const credential = await startRegistration({ optionsJSON });
+  return post<SessionResponse>('/api/signup', { credential, label: deviceLabel() });
+}
+
+/** Signs this device in with whichever passkey it has for this domain; there's no username to type. */
+export async function signInWithPasskey(): Promise<SessionResponse> {
+  const optionsJSON = await post<PublicKeyCredentialRequestOptionsJSON>('/api/passkey/login/options', {});
+  const credential = await startAuthentication({ optionsJSON });
+  return post<SessionResponse>('/api/passkey/login', { credential, label: deviceLabel() });
+}
+
+export async function addPasskey(token: string): Promise<{ passkeys: PasskeySummary[] }> {
+  const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>('/api/passkey/register/options', {}, token);
+  const credential = await startRegistration({ optionsJSON });
+  return post<{ passkeys: PasskeySummary[] }>('/api/passkey/register', { credential, label: deviceLabel() }, token);
+}
+
+export const listPasskeys = (token: string) => post<{ passkeys: PasskeySummary[] }>('/api/passkey/list', {}, token);
+
+/** What to tell someone when a passkey step fails; a dismissed Face ID prompt isn't an error worth a paragraph. */
+export function passkeyErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.name === 'NotAllowedError') return 'Cancelled.';
+  if (error instanceof Error && error.name === 'InvalidStateError') return 'This device already has a passkey for this account.';
+  return error instanceof Error ? error.message : String(error);
 }

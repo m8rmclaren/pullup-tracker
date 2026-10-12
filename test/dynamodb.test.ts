@@ -5,15 +5,17 @@
 import { CreateTableCommand, DeleteTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { redeemInvite } from '../src/lambda/accounts';
+import { redeemDeviceLink } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
 import { PreconditionFailed } from '../src/lambda/db';
 import { DynamoDb } from '../src/lambda/dynamodb';
+import { route } from '../src/lambda/http';
 import { updateProfile } from '../src/lambda/profile';
 import { syncEntries } from '../src/lambda/sync';
 import type { Entry } from '../src/shared/model';
 import { exerciseDayTotals } from '../src/shared/stats';
 import { type StatsFixtureCase, loadFixture, toEntries } from './fixtures';
+import { SoftAuthenticator } from './softAuthenticator';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT;
 const tableName = `pullups-test-${Date.now()}`;
@@ -173,15 +175,69 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     expect(await db.getUser('z1')).toMatchObject({ timeZone: 'Europe/London', version: 1 });
   });
 
-  it('redeems an invite exactly once, even when raced', async () => {
-    const code = 'real-invite-code-0123456789';
-    await db.putInvite(hashToken(code), { kind: 'friend', createdBy: 'admin', expiresAt: Date.now() + 60_000 });
-    const raced = await Promise.all([1, 2, 3].map((i) => redeemInvite(db, code, `Racer ${i}`, 'Europe/London', { now: Date.now })));
-    const winners = raced.flatMap((result) => (result.ok ? [result] : []));
+  it('redeems a device link exactly once, even when raced', async () => {
+    await documentClient.send(new PutCommand({ TableName: tableName, Item: { pk: 'U#r1', sk: 'P', id: 'r1', name: 'Racer', createdAt: 1 } }));
+    const code = 'real-device-link-0123456789';
+    await db.putInvite(hashToken(code), { kind: 'device', userId: 'r1', createdBy: 'r1', expiresAt: Date.now() + 60_000 });
+    const raced = await Promise.allSettled([1, 2, 3].map(() => redeemDeviceLink(db, code, { now: Date.now })));
+    const winners = raced.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
     expect(winners).toHaveLength(1);
-    const winner = winners[0]!;
-    expect(await db.userIdForToken(hashToken(winner.token))).toBe(winner.account.id);
-    expect(await db.getUser(winner.account.id)).toMatchObject({ name: winner.account.name, timeZone: 'Europe/London' });
+    expect(await db.userIdForToken(hashToken(winners[0]!.token))).toBe('r1');
     expect(await db.getInvite(hashToken(code))).toBeNull();
+    const backReference = await documentClient.send(new QueryCommand({ TableName: tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': 'U#r1', ':prefix': 'T#' } }));
+    expect(backReference.Items).toEqual([expect.objectContaining({ sk: `T#${hashToken(winners[0]!.token)}` })]);
+  });
+
+  it('takes a challenge exactly once, even when raced', async () => {
+    await db.putChallenge('c-race', { purpose: 'signup', userId: 'n1', name: 'New', timeZone: 'Europe/London', expiresAt: 5 });
+    const taken = await Promise.all([1, 2, 3].map(() => db.takeChallenge('c-race')));
+    expect(taken.filter(Boolean)).toEqual([{ purpose: 'signup', userId: 'n1', name: 'New', timeZone: 'Europe/London', expiresAt: 5 }]);
+    expect(await db.takeChallenge('never-issued')).toBeNull();
+  });
+
+  it('creates an account with its passkey, token and sweep marker in one write, once', async () => {
+    const user = { id: 'k1', name: 'Kay', createdAt: 7, timeZone: 'Europe/London' };
+    const passkey = { credentialId: 'cred-k1', publicKey: 'pk', counter: 0, transports: ['internal'], createdAt: 7, label: 'Pixel' };
+    await db.createAccount({ user, passkey, tokenHash: 'tok-k1', sweepDay: '2026-11-07' });
+    await expect(db.createAccount({ user: { ...user, name: 'Again' }, passkey: { ...passkey, credentialId: 'cred-k1b' }, tokenHash: 'tok-k1b', sweepDay: '2026-11-07' })).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.getUser('k1')).toEqual(user);
+    expect(await db.userIdForToken('tok-k1')).toBe('k1');
+    expect(await db.userIdForToken('tok-k1b')).toBeNull();
+    expect(await db.passkeysOf('k1')).toEqual([passkey]);
+    const marker = await documentClient.send(new QueryCommand({ TableName: tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': 'W#2026-11-07' } }));
+    expect(marker.Items).toEqual([{ pk: 'W#2026-11-07', sk: 'U#k1' }]);
+
+    await expect(db.addPasskey('k1', passkey)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.addPasskey('k1', { credentialId: 'cred-k1c', publicKey: 'pk2', counter: 0, createdAt: 8 });
+    await db.putPasskey('k1', { ...passkey, counter: 4 });
+    expect(await db.getPasskey('k1', 'cred-k1')).toEqual({ ...passkey, counter: 4 });
+    expect(await db.getPasskey('k1', 'missing')).toBeNull();
+    expect(await db.passkeysOf('k1')).toHaveLength(2);
+
+    await db.putToken('tok-k1d', 'k1', 9);
+    await expect(db.putToken('tok-k1d', 'k1', 9)).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.userIdForToken('tok-k1d')).toBe('k1');
+  });
+
+  it('signs up, signs in and adds a passkey through the router', async () => {
+    const origin = 'https://pullups.example.com';
+    const deps = { db, webAuthn: { rpId: 'pullups.example.com', rpName: 'Pull-ups', origins: [origin] }, isSignupOpen: true };
+    const post = async (path: string, body: unknown = {}, token?: string) => route({ method: 'POST', path, headers: token ? { 'x-pullup-token': token } : {}, body: JSON.stringify(body) }, deps);
+    const phone = new SoftAuthenticator();
+    const signupOptions = await post('/api/signup/options', { name: 'Dee', timeZone: 'Europe/London' });
+    const signedUp = await post('/api/signup', { credential: phone.create(signupOptions.body as never, origin), label: 'Pixel' });
+    expect(signedUp).toMatchObject({ status: 200, body: { account: { name: 'Dee', timeZone: 'Europe/London' } } });
+    const { token, account } = signedUp.body as { token: string; account: { id: string } };
+
+    const loginOptions = await post('/api/passkey/login/options');
+    const credential = phone.get(loginOptions.body as never, origin);
+    expect(await post('/api/passkey/login', { credential })).toMatchObject({ status: 200, body: { account: { id: account.id } } });
+    expect((await post('/api/passkey/login', { credential })).status).toBe(400);
+
+    const laptop = new SoftAuthenticator();
+    const registerOptions = await post('/api/passkey/register/options', {}, token);
+    expect(await post('/api/passkey/register', { credential: laptop.create(registerOptions.body as never, origin) }, token)).toMatchObject({ status: 200, body: { passkeys: [{ label: 'Pixel' }, {}] } });
+    const laptopOptions = await post('/api/passkey/login/options');
+    expect(await post('/api/passkey/login', { credential: laptop.get(laptopOptions.body as never, origin) })).toMatchObject({ status: 200, body: { account: { id: account.id } } });
   });
 });

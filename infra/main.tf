@@ -200,6 +200,10 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       TABLE = aws_dynamodb_table.data.name
+      # Passkeys bind to this domain for good, so they stay off on a cloudfront.net name.
+      RP_ID       = var.domain_name
+      APP_ORIGIN  = local.custom_domain ? "https://${var.domain_name}" : ""
+      SIGNUP_OPEN = tostring(var.signup_open)
     }
   }
 

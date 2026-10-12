@@ -316,12 +316,24 @@ export class Tracker {
     if (tokenChanged) this.scheduleSync(0);
   }
 
-  /** Adopts the token from a redeemed invite. Sets logged before joining are pushed to the new account. */
+  /**
+   * Adopts the token from a sign-up, a passkey sign-in or a device link. Sets logged before
+   * signing in are pushed to the account. Switching to a different account forgets what the
+   * old one had already synced, so its sets don't show (or get edited into) the new one.
+   */
   signIn(token: string, account: Account): void {
+    if (this.account && this.account.id !== account.id) this.forgetSyncedData();
     this.updateSettings({ token });
     this.account = account;
     this.persist();
     this.notifyListeners();
+  }
+
+  /** Unsynced work stays, to go up with the next sync; everything the server already has is dropped. */
+  private forgetSyncedData(): void {
+    for (const id of [...this.entries.keys()]) if (!this.outbox.has(id)) this.entries.delete(id);
+    for (const keyString of [...this.definitions.keys()]) if (!this.definitionOutbox.has(keyString)) this.definitions.delete(keyString);
+    this.lastSyncAt = null;
   }
 
   /** Re-applies every entry, e.g. from a JSON export. Older versions lose to what is already here. */
@@ -394,7 +406,7 @@ export class Tracker {
       if (this.pendingCount() > 0) this.isRerunQueued = true;
     } catch (error) {
       if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-        this.lastError = error.status === 401 ? 'This device was signed out. Open a new device link to sign back in.' : 'Forbidden by CloudFront — check the deploy.';
+        this.lastError = error.status === 401 ? 'This device was signed out. Sign in again with your passkey or a device link.' : 'Forbidden by CloudFront — check the deploy.';
         this.setStatus('auth');
         return;
       }

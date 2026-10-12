@@ -1,5 +1,5 @@
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, parseDefinitionKeyString } from '../shared/definitions';
-import type { Entry, InviteKind } from '../shared/model';
+import type { Entry } from '../shared/model';
 import type { ProfileFields } from '../shared/profile';
 import type { DayTotalRecord } from '../shared/stats';
 
@@ -28,12 +28,46 @@ export interface User extends ProfileFields {
 }
 
 export interface Invite {
-  kind: InviteKind;
+  /** `device` is the only kind made now; a `friend` invite from before passkeys still reads, and is refused. */
+  kind: 'device' | 'friend';
   /** For a device link, the account the new device joins. */
   userId?: string;
   /** Who created it: a user id, or 'admin' for scripts/invite.sh. */
   createdBy: string;
   expiresAt: number;
+}
+
+export type ChallengePurpose = 'signup' | 'login' | 'register';
+
+/** A WebAuthn challenge waiting for its response, keyed by the challenge's digest. */
+export interface PendingChallenge {
+  purpose: ChallengePurpose;
+  /** For signup, the id the new account will get; for register, the signed-in account. */
+  userId?: string;
+  /** For signup: the account's name and zone, held until the passkey exists. */
+  name?: string;
+  timeZone?: string;
+  expiresAt: number;
+}
+
+export interface Passkey {
+  /** base64url, as the authenticator reports it. */
+  credentialId: string;
+  /** COSE public key, base64url. */
+  publicKey: string;
+  counter: number;
+  transports?: string[];
+  createdAt: number;
+  label?: string;
+}
+
+/** Everything a sign-up writes, in one transaction: no account exists without a passkey. */
+export interface NewAccount {
+  user: User;
+  passkey: Passkey;
+  tokenHash: string;
+  /** The day the empty-account sweep first looks at this account. */
+  sweepDay: string;
 }
 
 /** Thrown when a conditional write loses a race; the caller re-reads and retries. */
@@ -74,13 +108,24 @@ export interface Db {
   /** Replaces an existing profile. `expectedVersion` null: the stored profile must have no version yet. */
   putProfile(user: User, expectedVersion: number | null): Promise<void>;
   userIdForToken(tokenHash: string): Promise<string | null>;
+  /** Stores a new session token for `userId`. */
+  putToken(tokenHash: string, userId: string, createdAt: number): Promise<void>;
   putInvite(codeHash: string, invite: Invite): Promise<void>;
   getInvite(codeHash: string): Promise<Invite | null>;
-  /**
-   * Atomically deletes the invite, stores the token for `userId`, and creates `newUser` if
-   * given. Throws PreconditionFailed if the invite was already used.
-   */
-  redeemInvite(codeHash: string, tokenHash: string, userId: string, newUser: User | null): Promise<void>;
+  /** Atomically deletes the invite and stores the token for `userId`. Throws PreconditionFailed if the invite was already used. */
+  redeemInvite(codeHash: string, tokenHash: string, userId: string, createdAt: number): Promise<void>;
+
+  putChallenge(challengeHash: string, challenge: PendingChallenge): Promise<void>;
+  /** Deletes the challenge and returns it, or null if it was never issued or already taken, so each is used once. */
+  takeChallenge(challengeHash: string): Promise<PendingChallenge | null>;
+  passkeysOf(userId: string): Promise<Passkey[]>;
+  getPasskey(userId: string, credentialId: string): Promise<Passkey | null>;
+  /** Throws PreconditionFailed if the credential is already stored for this user. */
+  addPasskey(userId: string, passkey: Passkey): Promise<void>;
+  /** Replaces a stored passkey, to record its sign count. */
+  putPasskey(userId: string, passkey: Passkey): Promise<void>;
+  /** Writes the profile, passkey, token and sweep marker at once. Throws PreconditionFailed if the user id is taken. */
+  createAccount(account: NewAccount): Promise<void>;
 }
 
 /** Db semantics over plain maps, for tests and the dev server. */
@@ -93,6 +138,11 @@ export class MemoryDb implements Db {
   definitions = new Map<string, StoredDefinition>();
   /** userId → definitionKeyString → adoptedAt */
   adoptions = new Map<string, Map<string, number>>();
+  challenges = new Map<string, PendingChallenge>();
+  /** userId → credentialId → passkey */
+  passkeys = new Map<string, Map<string, Passkey>>();
+  /** sweep day → user ids */
+  sweepMarkers = new Map<string, Set<string>>();
 
   private userEntries(userId: string) {
     let entriesById = this.entries.get(userId);
@@ -188,6 +238,10 @@ export class MemoryDb implements Db {
     return this.tokens.get(tokenHash) ?? null;
   }
 
+  async putToken(tokenHash: string, userId: string) {
+    this.tokens.set(tokenHash, userId);
+  }
+
   async putInvite(codeHash: string, invite: Invite) {
     this.invites.set(codeHash, { ...invite });
   }
@@ -197,10 +251,53 @@ export class MemoryDb implements Db {
     return invite ? { ...invite } : null;
   }
 
-  async redeemInvite(codeHash: string, tokenHash: string, userId: string, newUser: User | null) {
-    if (!this.invites.has(codeHash) || (newUser && this.users.has(newUser.id))) throw new PreconditionFailed();
+  async redeemInvite(codeHash: string, tokenHash: string, userId: string) {
+    if (!this.invites.has(codeHash)) throw new PreconditionFailed();
     this.invites.delete(codeHash);
     this.tokens.set(tokenHash, userId);
-    if (newUser) this.users.set(newUser.id, { ...newUser });
+  }
+
+  async putChallenge(challengeHash: string, challenge: PendingChallenge) {
+    this.challenges.set(challengeHash, { ...challenge });
+  }
+
+  async takeChallenge(challengeHash: string) {
+    const challenge = this.challenges.get(challengeHash);
+    this.challenges.delete(challengeHash);
+    return challenge ?? null;
+  }
+
+  private userPasskeys(userId: string) {
+    let passkeysById = this.passkeys.get(userId);
+    if (!passkeysById) this.passkeys.set(userId, (passkeysById = new Map()));
+    return passkeysById;
+  }
+
+  async passkeysOf(userId: string) {
+    return [...this.userPasskeys(userId).values()].map((passkey) => ({ ...passkey }));
+  }
+
+  async getPasskey(userId: string, credentialId: string) {
+    const passkey = this.userPasskeys(userId).get(credentialId);
+    return passkey ? { ...passkey } : null;
+  }
+
+  async addPasskey(userId: string, passkey: Passkey) {
+    if (this.userPasskeys(userId).has(passkey.credentialId)) throw new PreconditionFailed();
+    this.userPasskeys(userId).set(passkey.credentialId, { ...passkey });
+  }
+
+  async putPasskey(userId: string, passkey: Passkey) {
+    this.userPasskeys(userId).set(passkey.credentialId, { ...passkey });
+  }
+
+  async createAccount({ user, passkey, tokenHash, sweepDay }: NewAccount) {
+    if (this.users.has(user.id) || this.tokens.has(tokenHash)) throw new PreconditionFailed();
+    this.users.set(user.id, { ...user });
+    this.userPasskeys(user.id).set(passkey.credentialId, { ...passkey });
+    this.tokens.set(tokenHash, user.id);
+    let markedUserIds = this.sweepMarkers.get(sweepDay);
+    if (!markedUserIds) this.sweepMarkers.set(sweepDay, (markedUserIds = new Set()));
+    markedUserIds.add(user.id);
   }
 }

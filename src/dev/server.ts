@@ -3,7 +3,7 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
-import { createInvite } from '../lambda/accounts';
+import { createDeviceLink } from '../lambda/accounts';
 import { hashToken } from '../lambda/auth';
 import { MemoryDb } from '../lambda/db';
 import { route } from '../lambda/http';
@@ -29,6 +29,9 @@ class DiskDb extends MemoryDb {
     this.invites = new Map(snapshot.invites as never);
     this.definitions = new Map(snapshot.definitions as never);
     this.adoptions = nested(snapshot.adoptions);
+    this.challenges = new Map(snapshot.challenges as never);
+    this.passkeys = nested(snapshot.passkeys);
+    this.sweepMarkers = new Map((snapshot.sweepMarkers ?? []).map(([day, userIds]) => [day, new Set(userIds as string[])]));
   }
   save() {
     const flat = <V>(byUser: Map<string, Map<string, V>>) => [...byUser].map(([userId, rows]) => [userId, [...rows]]);
@@ -43,6 +46,9 @@ class DiskDb extends MemoryDb {
         invites: [...this.invites],
         definitions: [...this.definitions],
         adoptions: flat(this.adoptions),
+        challenges: [...this.challenges],
+        passkeys: flat(this.passkeys),
+        sweepMarkers: [...this.sweepMarkers].map(([day, userIds]) => [day, [...userIds]]),
       }),
     );
   }
@@ -53,9 +59,10 @@ db.load();
 if (!db.users.has(DEV_USER_ID)) db.users.set(DEV_USER_ID, { id: DEV_USER_ID, name: 'Dev', createdAt: Date.now() });
 db.tokens.set(hashToken(DEV_TOKEN), DEV_USER_ID);
 const clock = { now: Date.now };
-const friendInvite = await createInvite(db, DEV_USER_ID, 'friend', clock);
-const devLink = await createInvite(db, DEV_USER_ID, 'device', clock);
+const devLink = await createDeviceLink(db, DEV_USER_ID, clock);
 db.save();
+// Passkeys need a domain, and an IP address isn't one, so they work on localhost but not on 127.0.0.1.
+const webAuthn = { rpId: 'localhost', rpName: 'Pull-ups (dev)', origins: [`http://localhost:${port}`] };
 
 const contentTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -72,7 +79,7 @@ createServer(async (request, response) => {
   if (url.pathname.startsWith('/api/')) {
     let body = '';
     for await (const chunk of request) body += chunk;
-    const apiResponse = await route({ method: request.method ?? 'GET', path: url.pathname, headers: request.headers as Record<string, string>, body }, { db });
+    const apiResponse = await route({ method: request.method ?? 'GET', path: url.pathname, headers: request.headers as Record<string, string>, body }, { db, webAuthn, isSignupOpen: true });
     db.save();
     response.writeHead(apiResponse.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     response.end(JSON.stringify(apiResponse.body));
@@ -88,7 +95,7 @@ createServer(async (request, response) => {
   createReadStream(file).pipe(response);
 }).listen(port, () => {
   console.log(`pull-up tracker dev server on http://localhost:${port}  (data in .devdata/)`);
-  console.log(`  join as a new user:  http://localhost:${port}/#join=${friendInvite.code}`);
+  console.log(`  sign up:             http://localhost:${port}/  (Settings → Create an account; passkeys need localhost)`);
   console.log(`  sign in as Dev:      http://localhost:${port}/#device=${devLink.code}  (15 min)`);
   console.log(`  curl as Dev:         -H 'x-pullup-token: ${DEV_TOKEN}'`);
 });

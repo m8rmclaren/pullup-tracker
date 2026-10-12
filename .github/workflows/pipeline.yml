@@ -85,10 +85,11 @@ jobs:
           -var "region=$AWS_REGION"
           -var "domain_name=${{ vars.DOMAIN_NAME }}"
           -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}"
+          -var "signup_open=${{ vars.SIGNUP_OPEN || 'false' }}"
       - run: scripts/publish-site.sh
       - name: summary
         run: |
           url=$(terraform -chdir=infra output -raw app_url)
           echo "Deployed to $url" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "First deploy? Run \`scripts/invite.sh new\` from AWS CloudShell for your own invite link." >> "$GITHUB_STEP_SUMMARY"
+          echo "First deploy? Set SIGNUP_OPEN to true, deploy, and create your account under Settings in the app." >> "$GITHUB_STEP_SUMMARY"

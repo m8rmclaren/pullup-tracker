@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Entry } from '../src/shared/model';
-import { DEVICE_LINK_TTL_MS, createInvite } from '../src/lambda/accounts';
+import { DEVICE_LINK_TTL_MS, createDeviceLink } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
 import { type StoredEntry, MemoryDb } from '../src/lambda/db';
 import { route } from '../src/lambda/http';
@@ -253,7 +253,7 @@ describe('route', () => {
     const db = setup();
     expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 })).status).toBe(401);
     expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 }, USER_ONE_TOKEN + 'x')).status).toBe(401);
-    expect((await post(db, '/api/invite', { kind: 'friend' })).status).toBe(401);
+    expect((await post(db, '/api/invite', { kind: 'device' })).status).toBe(401);
     expect(db.entries.size).toBe(0);
   });
 
@@ -277,50 +277,23 @@ describe('route', () => {
     expect(db.users.get('u1')!.timeZone).toBeUndefined();
   });
 
-  it('a new account takes the device’s zone, or Denver from a client that sends none', async () => {
-    const db = setup();
-    const inviteCode = async () => ((await post(db, '/api/invite', { kind: 'friend' }, USER_ONE_TOKEN)).body as { code: string }).code;
-    const london = await post(db, '/api/join', { code: await inviteCode(), name: 'Ana', timeZone: 'Europe/London' });
-    expect(london).toMatchObject({ status: 200, body: { account: { name: 'Ana', timeZone: 'Europe/London' } } });
-    const { token } = london.body as { token: string };
-    await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(Date.parse('2026-10-08T23:30:00Z'), 6)], sinceCursor: 0 }, token);
-    const londonId = (london.body as { account: { id: string } }).account.id;
-    expect(await db.getDayTotal(londonId, '2026-10-09')).toMatchObject({ reps: 6 });
-
-    expect(await post(db, '/api/join', { code: await inviteCode(), name: 'Old client' })).toMatchObject({ status: 200, body: { account: { timeZone: 'America/Denver' } } });
-    expect((await post(db, '/api/join', { code: await inviteCode(), name: 'Bad', timeZone: 'Mars/Base' })).status).toBe(400);
-  });
-
-  it('a friend invite creates a new account, once', async () => {
-    const db = setup();
-    const invited = await post(db, '/api/invite', { kind: 'friend' }, USER_ONE_TOKEN);
-    const code = (invited.body as { code: string }).code;
-    expect((await post(db, '/api/join', { code, name: '   ' })).status).toBe(400);
-    const joined = await post(db, '/api/join', { code, name: '  Sam  ' });
-    expect(joined).toMatchObject({ status: 200, body: { account: { name: 'Sam' } } });
-    const { token, account } = joined.body as { token: string; account: { id: string } };
-    expect(account.id).not.toMatch(/^u[12]$/);
-    expect(await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 }, token)).toMatchObject({ status: 200, body: { account } });
-    expect((await post(db, '/api/join', { code, name: 'Sam again' })).status).toBe(410);
-  });
-
   it('a device link signs into the same account and expires', async () => {
     const db = setup();
     const startMs = Date.now();
     await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(OCT8, 4)], sinceCursor: 0 }, USER_ONE_TOKEN);
-    const link = (await createInvite(db, 'u1', 'device', { now: () => startMs })).code;
+    const link = (await createDeviceLink(db, 'u1', { now: () => startMs })).code;
     const joined = await post(db, '/api/join', { code: link }, undefined, () => startMs + 1000);
     const { token } = joined.body as { token: string };
     const synced = await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 }, token);
     expect(synced).toMatchObject({ status: 200, body: { account: { id: 'u1' } } });
     expect((synced.body as { entries: unknown[] }).entries).toHaveLength(1);
 
-    const late = (await createInvite(db, 'u1', 'device', { now: () => startMs })).code;
+    const late = (await createDeviceLink(db, 'u1', { now: () => startMs })).code;
     expect((await post(db, '/api/join', { code: late }, undefined, () => startMs + DEVICE_LINK_TTL_MS)).status).toBe(410);
   });
 
   it('rejects a code that was never issued', async () => {
-    expect((await post(setup(), '/api/join', { code: 'never-issued-code-0123456789', name: 'X' })).status).toBe(410);
-    expect((await post(setup(), '/api/join', { code: 'short', name: 'X' })).status).toBe(400);
+    expect((await post(setup(), '/api/join', { code: 'never-issued-code-0123456789' })).status).toBe(410);
+    expect((await post(setup(), '/api/join', { code: 'short' })).status).toBe(400);
   });
 });
