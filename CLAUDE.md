@@ -12,6 +12,7 @@ relevant section there before changing any of them.
 - `infra/` — Terraform for the app, plus `bootstrap.yaml` (CloudFormation for OIDC trust, deploy role, state bucket)
 - `scripts/` — build, dev, deploy, invite tooling
 - `test/` — vitest suites
+- `docs/native-app.md` — design and milestones for the native iOS app and the v2 data model; read it before working on either
 
 ## Commands
 
