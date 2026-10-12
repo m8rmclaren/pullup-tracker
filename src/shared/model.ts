@@ -1,5 +1,6 @@
 import { PULL_UP, builtInExercise, builtInVariation, isBuiltInId, isCreatedExerciseId, isCreatedVariationId } from './catalog';
 import type { Definition } from './definitions';
+import type { ProfileFields } from './profile';
 
 // The data model is a state-based CRDT: a map of entries keyed by id, where each
 // entry is a last-writer-wins register and deletes are tombstones. merge() is
@@ -185,9 +186,9 @@ export interface SyncResponse {
 
 export const MAX_PUSHED_ENTRIES = 1000;
 
-export interface Account {
+/** The signed-in profile, as /api/sync, /api/join and /api/profile return it. */
+export interface Account extends ProfileFields {
   id: string;
-  name: string;
   /** IANA zone the account's days are kept in. The server always sends it; an account persisted by an older client may lack it, which means DEFAULT_TIME_ZONE. */
   timeZone?: string;
 }

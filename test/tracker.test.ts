@@ -3,9 +3,9 @@ import { hashToken } from '../src/lambda/auth';
 import { MemoryDb } from '../src/lambda/db';
 import { route } from '../src/lambda/http';
 import { syncEntries } from '../src/lambda/sync';
-import type { Entry, SyncRequest, SyncResponse } from '../src/shared/model';
+import type { Account, Entry, SyncRequest, SyncResponse } from '../src/shared/model';
 import { computeStats } from '../src/shared/stats';
-import { HttpError, type KeyValueStorage, Tracker, type Transport, backoffMs } from '../src/app/tracker';
+import { HttpError, type KeyValueStorage, type ProfileTransport, Tracker, type Transport, backoffMs } from '../src/app/tracker';
 
 class MemoryStorage implements KeyValueStorage {
   items = new Map<string, string>();
@@ -334,6 +334,84 @@ describe('backoffMs', () => {
   it('doubles from 2s and caps at 5 minutes', () => {
     expect([1, 2, 3].map(backoffMs)).toEqual([2000, 4000, 8000]);
     expect(backoffMs(20)).toBe(300_000);
+  });
+});
+
+describe('Tracker profile', () => {
+  const serveProfile = (db: MemoryDb): ProfileTransport => async (patch) => {
+    await serveSync(db, { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 });
+    const response = await route({ method: 'POST', path: '/api/profile', headers: { 'x-pullup-token': SERVER_TOKEN }, body: JSON.stringify(patch) }, { db });
+    if (response.status !== 200) throw new HttpError(response.status, (response.body as { error: string }).error);
+    return response.body as Account;
+  };
+  const makeProfileTracker = (db: MemoryDb, profileTransport: ProfileTransport, storage = new MemoryStorage()) => {
+    const clock = new Clock();
+    const tracker = new Tracker({ storage, transport: serverTransport(db), profileTransport, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, deviceTimeZone: 'America/Denver' });
+    tracker.updateSettings({ token: 'tok' });
+    return { tracker, clock, storage };
+  };
+
+  it('keeps the device goal until the account has one, so an existing ring doesn’t move', async () => {
+    const db = new MemoryDb();
+    const { tracker } = makeProfileTracker(db, serveProfile(db));
+    tracker.updateSettings({ goal: 42 });
+    await tracker.syncNow();
+    expect(tracker.account?.dailyGoalReps).toBeUndefined();
+    expect(tracker.goal()).toBe(42);
+  });
+
+  it('applies a goal, zone and name at once, sends them before the next sync, and every device agrees', async () => {
+    const db = new MemoryDb();
+    const { tracker, storage } = makeProfileTracker(db, serveProfile(db));
+    await tracker.syncNow();
+    tracker.updateProfile({ dailyGoalReps: 50, timeZone: 'Europe/London', name: 'Hay' });
+    expect([tracker.goal(), tracker.timeZone(), tracker.accountName()]).toEqual([50, 'Europe/London', 'Hay']);
+    expect(tracker.status).toBe('pending');
+    expect(new Tracker({ storage, transport: serverTransport(db) }).goal()).toBe(50);
+
+    await tracker.syncNow();
+    expect(tracker.pendingCount()).toBe(0);
+    expect(db.users.get(USER_ID)).toMatchObject({ dailyGoalReps: 50, timeZone: 'Europe/London', name: 'Hay' });
+    const otherDevice = makeProfileTracker(db, serveProfile(db)).tracker;
+    otherDevice.updateSettings({ goal: 20 });
+    await otherDevice.syncNow();
+    expect([otherDevice.goal(), otherDevice.timeZone(), otherDevice.accountName()]).toEqual([50, 'Europe/London', 'Hay']);
+  });
+
+  it('keeps an edit queued offline, and one made while its push was in flight', async () => {
+    const db = new MemoryDb();
+    let isOnline = false;
+    let release: (() => void) | null = null;
+    const { tracker } = makeProfileTracker(db, async (patch, token) => {
+      if (!isOnline) throw new TypeError('Failed to fetch');
+      if (release === null) await new Promise<void>((resolve) => (release = resolve));
+      return serveProfile(db)(patch, token);
+    });
+    tracker.updateProfile({ dailyGoalReps: 30 });
+    await tracker.syncNow();
+    expect(tracker.status).toBe('offline');
+    expect(tracker.goal()).toBe(30);
+
+    isOnline = true;
+    const inFlight = tracker.syncNow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    tracker.updateProfile({ dailyGoalReps: 31 });
+    release!();
+    await inFlight;
+    expect(tracker.goal()).toBe(31);
+    expect(tracker.pendingCount()).toBe(1);
+    await tracker.syncNow();
+    expect(tracker.pendingCount()).toBe(0);
+    expect(db.users.get(USER_ID)!.dailyGoalReps).toBe(31);
+  });
+
+  it('drops queued profile edits when the device switches accounts', () => {
+    const db = new MemoryDb();
+    const { tracker } = makeProfileTracker(db, serveProfile(db));
+    tracker.updateProfile({ name: 'Mine' });
+    tracker.signIn('other-token', { id: 'u2', name: 'Theirs' });
+    expect(tracker.accountName()).toBe('Theirs');
+    expect(tracker.pendingCount()).toBe(0);
   });
 });
 

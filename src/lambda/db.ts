@@ -1,5 +1,6 @@
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, parseDefinitionKeyString } from '../shared/definitions';
 import type { Entry, InviteKind } from '../shared/model';
+import type { ProfileFields } from '../shared/profile';
 import type { DayTotalRecord } from '../shared/stats';
 
 /** An entry as stored: `serverWrittenAt` is the server time it was written, the delta-sync cursor. */
@@ -19,12 +20,11 @@ export interface StoredDayTotal extends Omit<DayTotalRecord, 'holdSeconds' | 'by
 /** A created exercise or variation as stored: `version` is bumped on every write and guards against a lost update. */
 export type StoredDefinition = Definition & { version: number };
 
-export interface User {
+export interface User extends ProfileFields {
   id: string;
-  name: string;
   createdAt: number;
-  /** Absent on accounts made before zones were per user, which means DEFAULT_TIME_ZONE. */
-  timeZone?: string;
+  /** Bumped on every profile write. Absent on a profile never edited since sign-up. */
+  version?: number;
 }
 
 export interface Invite {
@@ -71,6 +71,8 @@ export interface Db {
   adoptDefinition(userId: string, key: DefinitionKey, adoptedAt: number): Promise<void>;
 
   getUser(userId: string): Promise<User | null>;
+  /** Replaces an existing profile. `expectedVersion` null: the stored profile must have no version yet. */
+  putProfile(user: User, expectedVersion: number | null): Promise<void>;
   userIdForToken(tokenHash: string): Promise<string | null>;
   putInvite(codeHash: string, invite: Invite): Promise<void>;
   getInvite(codeHash: string): Promise<Invite | null>;
@@ -174,6 +176,12 @@ export class MemoryDb implements Db {
   async getUser(userId: string) {
     const user = this.users.get(userId);
     return user ? { ...user } : null;
+  }
+
+  async putProfile(user: User, expectedVersion: number | null) {
+    const stored = this.users.get(user.id);
+    if (!stored || (stored.version ?? null) !== expectedVersion) throw new PreconditionFailed();
+    this.users.set(user.id, { ...user });
   }
 
   async userIdForToken(tokenHash: string) {

@@ -71,6 +71,8 @@ export async function recomputeDayTotal(db: Db, userId: string, day: string, tim
     const stored = await db.getDayTotal(userId, day);
     const liveEntries = (await db.entriesDoneBetween(userId, fromMs, toMs)).filter((entry) => !entry.deleted);
     const dayTotal = { ...computeDayTotal(day, liveEntries, await unitLookupFor(db, liveEntries)), version: (stored?.version ?? 0) + 1 };
+    // An empty day reads the same with no total at all, so none is created for one.
+    if (!stored && dayTotal.sets === 0) return;
     try {
       await db.putDayTotal(userId, dayTotal, stored?.version ?? null);
       return;

@@ -94,5 +94,24 @@
     {"name": "a built-in variation slug as a created variation's id", "definition": {"id": "tuck", "exerciseId": "muscle-up", "name": "Into tuck", "createdAt": 1000, "updatedAt": 1000}, "valid": false},
     {"name": "null", "definition": null, "valid": false},
     {"name": "an array", "definition": [], "valid": false}
+  ],
+  "profilePatches": [
+    {"name": "an empty patch", "patch": {}, "valid": true},
+    {"name": "every field with its clock", "patch": {"name": "Hay", "nameUpdatedAt": 1, "timeZone": "Europe/London", "zoneUpdatedAt": 1, "dailyGoalReps": 35, "goalUpdatedAt": 1}, "valid": true},
+    {"name": "a name without its clock", "patch": {"name": "Hay"}, "valid": false},
+    {"name": "a clock without its value", "patch": {"goalUpdatedAt": 5}, "valid": false},
+    {"name": "a zero clock", "patch": {"dailyGoalReps": 35, "goalUpdatedAt": 0}, "valid": false},
+    {"name": "a fractional clock", "patch": {"dailyGoalReps": 35, "goalUpdatedAt": 1.5}, "valid": false},
+    {"name": "an unknown zone", "patch": {"timeZone": "Mars/Base", "zoneUpdatedAt": 1}, "valid": false},
+    {"name": "a zone that isn't a string", "patch": {"timeZone": 7, "zoneUpdatedAt": 1}, "valid": false},
+    {"name": "a goal of 0", "patch": {"dailyGoalReps": 0, "goalUpdatedAt": 1}, "valid": false},
+    {"name": "a goal of 10000", "patch": {"dailyGoalReps": 10000, "goalUpdatedAt": 1}, "valid": true},
+    {"name": "a goal of 10001", "patch": {"dailyGoalReps": 10001, "goalUpdatedAt": 1}, "valid": false},
+    {"name": "a fractional goal", "patch": {"dailyGoalReps": 35.5, "goalUpdatedAt": 1}, "valid": false},
+    {"name": "a name that is only spaces", "patch": {"name": "   ", "nameUpdatedAt": 1}, "valid": false},
+    {"name": "a name with untrimmed spaces (clients clean before sending)", "patch": {"name": " Hay ", "nameUpdatedAt": 1}, "valid": false},
+    {"name": "a name of 24 characters", "patch": {"name": "aaaaaaaaaaaaaaaaaaaaaaaa", "nameUpdatedAt": 1}, "valid": true},
+    {"name": "a name of 25 characters", "patch": {"name": "aaaaaaaaaaaaaaaaaaaaaaaaa", "nameUpdatedAt": 1}, "valid": false},
+    {"name": "null", "patch": null, "valid": false}
   ]
 }

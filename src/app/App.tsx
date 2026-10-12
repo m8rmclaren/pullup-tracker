@@ -44,7 +44,7 @@ export function App({ tracker }: { tracker: Tracker }) {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const entries = useMemo(() => tracker.allEntries(), [tracker, version]);
-  const goal = tracker.settings.goal;
+  const goal = tracker.goal();
   const stats = useMemo(() => computeStats(entries, now, goal, timeZone, unitLookup(tracker)), [entries, now, goal, timeZone, tracker, version]);
   const usualSetReps = useMemo(() => usualReps(entries, now, timeZone), [entries, now, timeZone]);
 

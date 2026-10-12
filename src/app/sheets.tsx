@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { type Entry, type InviteKind, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_NAME_LENGTH, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, clampAddedWeight, exerciseIdOf, formatAddedWeight, isValidEntry } from '../shared/model';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { type Entry, type InviteKind, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_NAME_LENGTH, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, clampAddedWeight, cleanName, exerciseIdOf, formatAddedWeight, isValidEntry } from '../shared/model';
+import { MIN_DAILY_GOAL_REPS } from '../shared/profile';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallClockToEpochMs } from '../shared/time';
 import { createInvite, inviteLink, join, parseInviteLink } from './api';
@@ -357,7 +358,7 @@ function AccountSection({ tracker, onOpenInvite }: { tracker: Tracker; onOpenInv
       {token ? (
         <>
           <p>
-            Signed in as <b>{tracker.account?.name ?? '…'}</b>
+            Signed in as <b>{tracker.accountName() ?? '…'}</b>
           </p>
           <div class="sheet__actions sheet__actions--inline">
             <button type="button" class="btn" onClick={() => void createLink('friend')}>
@@ -392,6 +393,54 @@ function AccountSection({ tracker, onOpenInvite }: { tracker: Tracker; onOpenInv
         </div>
       </label>
       {note ? <p class="muted small">{note}</p> : null}
+    </>
+  );
+}
+
+function ProfileSection({ tracker }: { tracker: Tracker }) {
+  const savedName = tracker.accountName() ?? '';
+  const [name, setName] = useState(savedName);
+  const timeZone = tracker.timeZone();
+  const deviceTimeZone = tracker.deviceTimeZone;
+  const zones = useMemo(() => {
+    let supported: string[] = [];
+    try {
+      supported = Intl.supportedValuesOf('timeZone');
+    } catch {}
+    return [...new Set([...supported, timeZone, deviceTimeZone])].sort();
+  }, [timeZone, deviceTimeZone]);
+  const cleanedName = cleanName(name);
+
+  return (
+    <>
+      <label class="field">
+        <span>Your name</span>
+        <div class="token-row">
+          <input type="text" maxLength={MAX_NAME_LENGTH} autocomplete="nickname" value={name} onInput={(event) => setName((event.target as HTMLInputElement).value)} />
+          <button type="button" class="btn-text" disabled={!cleanedName || cleanedName === savedName} onClick={() => cleanedName && tracker.updateProfile({ name: cleanedName })}>
+            Save
+          </button>
+        </div>
+      </label>
+      <label class="field">
+        <span>Time zone</span>
+        <select value={timeZone} onChange={(event) => tracker.updateProfile({ timeZone: (event.target as HTMLSelectElement).value })}>
+          {zones.map((zone) => (
+            <option key={zone} value={zone}>
+              {zone.replace(/_/g, ' ')}
+            </option>
+          ))}
+        </select>
+      </label>
+      {timeZone !== deviceTimeZone ? (
+        <p class="muted small">
+          This device is in {deviceTimeZone.replace(/_/g, ' ')}.{' '}
+          <button type="button" class="btn-text" onClick={() => tracker.updateProfile({ timeZone: deviceTimeZone })}>
+            Use it
+          </button>
+        </p>
+      ) : null}
+      <p class="muted small">Your days start at midnight here. Changing it moves your last 62 days into the new zone; older days stay as they were.</p>
     </>
   );
 }
@@ -479,10 +528,17 @@ export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tra
         <AccountSection tracker={tracker} onOpenInvite={onOpenInvite} />
       </section>
 
+      {tracker.settings.token ? (
+        <section class="settings-sec">
+          <h3>Profile</h3>
+          <ProfileSection tracker={tracker} />
+        </section>
+      ) : null}
+
       <section class="settings-sec">
         <h3>Daily goal</h3>
-        <Stepper value={tracker.settings.goal} min={1} max={500} label="Daily goal" onChange={(goal) => tracker.updateSettings({ goal })} />
-        <p class="muted small">Stored on this device only.</p>
+        <Stepper value={tracker.goal()} min={MIN_DAILY_GOAL_REPS} max={500} label="Daily goal" onChange={(dailyGoalReps) => tracker.updateProfile({ dailyGoalReps })} />
+        <p class="muted small">{tracker.settings.token ? 'Saved to your account, so every device agrees.' : 'Stored on this device until you join.'}</p>
       </section>
 
       <section class="settings-sec">

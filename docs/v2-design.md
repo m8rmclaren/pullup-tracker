@@ -188,7 +188,12 @@ on it.
 - `time.ts` takes the zone as a parameter instead of a constant. Day-key arithmetic stays
   pure calendar math.
 - Changing your zone recomputes your day totals for the last 62 days. Older days keep
-  their keys. That's the cost of moving, and it's rare.
+  their keys. That's the cost of moving, and it's rare. The window reaches two days past
+  each end, since two zones' todays can be up to two dates apart (UTC+14 vs UTC−12), and a
+  day with no sets gets no total rather than an empty one. The rebuild runs whenever a
+  request's zone is the stored one afterwards, so a client retrying a change whose first
+  attempt died mid-rebuild heals it. A sync that read the old zone and is still running
+  can write one day in the old zone; the next edit to that day fixes it.
 - Leaderboards compare **each person's own** today, week and month. Two friends in
   different zones are on different "todays" for part of the day, which is what users
   expect.
@@ -196,8 +201,16 @@ on it.
 ### Profile
 
 `U#<userId> P` gains `dailyGoalReps`, `goalUpdatedAt`, `timeZone`, `zoneUpdatedAt`, and a
-`name` that is editable, merged last-writer-wins. The goal moves off the device so the
-phone, Watch, widgets and the "% of goal" ranking agree on it.
+`name` that is editable, merged last-writer-wins with its own clock, `nameUpdatedAt`. Each
+field is a separate register, so a goal set on the phone and a zone set on the laptop both
+survive (`merge.json`'s `profiles`). A field with no clock was set at sign-up, or predates
+clocks, and loses to any edit. The goal moves off the device so the phone, Watch, widgets
+and the "% of goal" ranking agree on it. Until an account's goal is first set, each device
+keeps showing its own, so nobody's ring moves on upgrade.
+
+The profile also gains a `version`, bumped on every edit, and edits are a read, a merge and
+a put conditional on it. (The API role may put but not update items, so a put must carry
+every profile attribute.) A profile never edited since sign-up has no version.
 
 It also gains `joinedVia: { kind, linkCreatedBy }`, written once at sign-up and never
 edited. Absent means the account predates links.
@@ -345,8 +358,10 @@ worker loads the new code on its next launch.
   `x-`/`v-` prefix says which is which. `account` gains the new profile fields and
   `incomingRequests: [{ id, name, challengeId }]`, without tombstones.
 
-**`POST /api/profile`**: `{ name?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,
-last-writer-wins per field. Returns the stored profile.
+**`POST /api/profile`**: `{ name?, nameUpdatedAt?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,
+last-writer-wins per field; every value comes with its clock (`validation.json`'s
+`profilePatches`). Returns the stored profile, shaped like the sync response's `account`.
+A zone change rebuilds recent day totals before it returns (see Time zones).
 
 **`POST /api/friends`**: `{}` → `{ friends: [{ id, name }], friendLink }`.
 **`POST /api/friends/remove`**: `{ friendId }` deletes both sides.

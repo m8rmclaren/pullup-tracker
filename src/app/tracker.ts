@@ -1,6 +1,7 @@
 import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
 import { type Measure, builtInExercise, builtInVariation } from '../shared/catalog';
 import { type Definition, type ExerciseDefinition, MAX_PUSHED_DEFINITIONS, type VariationDefinition, definitionKeyOf, definitionKeyString, isVariationDefinition, mergeDefinitionsInto } from '../shared/definitions';
+import { PROFILE_REGISTERS, type ProfilePatch } from '../shared/profile';
 import { DEFAULT_TIME_ZONE } from '../shared/time';
 
 export interface Settings {
@@ -25,6 +26,7 @@ export class HttpError extends Error {
 }
 
 export type Transport = (request: SyncRequest, token: string) => Promise<SyncResponse>;
+export type ProfileTransport = (patch: ProfilePatch, token: string) => Promise<Account>;
 
 export interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -34,6 +36,8 @@ export interface KeyValueStorage {
 export interface TrackerDeps {
   storage: KeyValueStorage;
   transport: Transport;
+  /** POST /api/profile. Without it, profile edits stay queued. */
+  profileTransport?: ProfileTransport;
   now?: () => number;
   newId?: () => string;
   /** The device's IANA zone, used for days until the device joins an account. */
@@ -55,6 +59,8 @@ interface PersistedState {
   definitions?: Definition[];
   /** Keys (definitionKeyString) of definitions created or edited here and not yet acknowledged. */
   definitionOutbox?: string[];
+  /** Profile edits made here and not yet acknowledged, each with its clock. */
+  pendingProfile?: ProfilePatch;
 }
 
 /** What the UI needs to show an exercise, built-in or created. */
@@ -82,6 +88,7 @@ export class Tracker {
   private outbox = new Set<string>();
   private definitions = new Map<string, Definition>();
   private definitionOutbox = new Set<string>();
+  private pendingProfile: ProfilePatch = {};
   private cursor = 0;
   /** Who this device is signed in as, from the last sync or join. */
   account: Account | null = null;
@@ -129,12 +136,42 @@ export class Tracker {
 
   /** The zone days are kept in: the account's, or this device's before it joins one. */
   timeZone(): string {
+    if (this.pendingProfile.timeZone) return this.pendingProfile.timeZone;
     if (this.account) return this.account.timeZone ?? DEFAULT_TIME_ZONE;
     return this.deviceTimeZone;
   }
 
+  /** The account's goal once one is set, else this device's own (every goal before profiles had one). */
+  goal(): number {
+    return this.pendingProfile.dailyGoalReps ?? this.account?.dailyGoalReps ?? this.settings.goal;
+  }
+
+  accountName(): string | undefined {
+    return this.pendingProfile.name ?? this.account?.name;
+  }
+
+  /**
+   * Edits the account's profile: applied here at once, queued, and sent before the next sync.
+   * Signed out, only the goal applies, to this device.
+   */
+  updateProfile(patch: { name?: string; timeZone?: string; dailyGoalReps?: number }): void {
+    if (patch.dailyGoalReps !== undefined) this.settings = { ...this.settings, goal: patch.dailyGoalReps };
+    if (this.settings.token) {
+      const clockAfter = (storedClock: number | undefined, pendingClock: number | undefined) => Math.max(this.now(), (storedClock ?? 0) + 1, (pendingClock ?? 0) + 1);
+      const pending = { ...this.pendingProfile };
+      if (patch.name !== undefined) Object.assign(pending, { name: patch.name, nameUpdatedAt: clockAfter(this.account?.nameUpdatedAt, pending.nameUpdatedAt) });
+      if (patch.timeZone !== undefined) Object.assign(pending, { timeZone: patch.timeZone, zoneUpdatedAt: clockAfter(this.account?.zoneUpdatedAt, pending.zoneUpdatedAt) });
+      if (patch.dailyGoalReps !== undefined) Object.assign(pending, { dailyGoalReps: patch.dailyGoalReps, goalUpdatedAt: clockAfter(this.account?.goalUpdatedAt, pending.goalUpdatedAt) });
+      this.pendingProfile = pending;
+      if (this.status === 'synced') this.status = 'pending';
+      this.scheduleSync();
+    }
+    this.persist();
+    this.notifyListeners();
+  }
+
   pendingCount(): number {
-    return this.outbox.size + this.definitionOutbox.size;
+    return this.outbox.size + this.definitionOutbox.size + (Object.keys(this.pendingProfile).length ? 1 : 0);
   }
 
   allDefinitions(): Definition[] {
@@ -178,6 +215,23 @@ export class Tracker {
   /** Random lowercase base32, the alphabet created ids are checked against. */
   private newDefinitionSuffix(): string {
     return [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => BASE32_ALPHABET[byte & 31]).join('');
+  }
+
+  /** Sends queued profile edits; a field edited again while in flight stays queued. */
+  private async pushProfile(token: string): Promise<void> {
+    const sent = this.pendingProfile;
+    if (!Object.keys(sent).length || !this.deps.profileTransport) return;
+    const account = await this.deps.profileTransport(sent, token);
+    if (this.settings.token !== token) return;
+    this.account = account;
+    const remaining: ProfilePatch = { ...this.pendingProfile };
+    for (const register of PROFILE_REGISTERS) {
+      if (remaining[register.clock] !== sent[register.clock]) continue;
+      delete remaining[register.value];
+      delete remaining[register.clock];
+    }
+    this.pendingProfile = remaining;
+    this.persist();
   }
 
   private writeDefinition(definition: Definition): void {
@@ -253,6 +307,7 @@ export class Tracker {
       // A different token may be a different account; pull its whole history.
       this.cursor = 0;
       this.account = null;
+      this.pendingProfile = {};
       this.consecutiveFailures = 0;
       this.status = this.idleStatus();
     }
@@ -315,6 +370,7 @@ export class Tracker {
     this.setStatus('syncing');
     try {
       const token = this.settings.token;
+      await this.pushProfile(token);
       const response = await this.deps.transport(
         { protocolVersion: PROTOCOL_VERSION, pushedEntries: pushedIds.map((id) => this.entries.get(id)!), pushedDefinitions: pushedDefinitionKeys.map((keyString) => this.definitions.get(keyString)!), sinceCursor: this.cursor },
         token,
@@ -388,6 +444,7 @@ export class Tracker {
       this.account = persisted.account ?? null;
       this.settings = Object.assign({ ...DEFAULT_SETTINGS }, persisted.settings);
       this.lastSyncAt = persisted.lastSyncAt ?? null;
+      this.pendingProfile = persisted.pendingProfile ?? {};
       mergeDefinitionsInto(this.definitions, persisted.definitions ?? []);
       this.definitionOutbox = new Set((persisted.definitionOutbox ?? []).filter((keyString) => this.definitions.has(keyString)));
     } catch {
@@ -406,6 +463,7 @@ export class Tracker {
       lastSyncAt: this.lastSyncAt,
       definitions: [...this.definitions.values()],
       definitionOutbox: [...this.definitionOutbox],
+      pendingProfile: this.pendingProfile,
     };
     this.deps.storage.setItem(STORAGE_KEY, JSON.stringify(state));
   }

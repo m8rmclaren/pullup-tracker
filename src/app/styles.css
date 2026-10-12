@@ -1097,7 +1097,8 @@ input:focus-visible {
   color: var(--text-2);
 }
 
-.field input {
+.field input,
+.field select {
   height: 46px;
   width: 100%;
   min-width: 0;
