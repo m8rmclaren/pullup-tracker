@@ -9,6 +9,7 @@ import { redeemDeviceLink } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
 import { PreconditionFailed } from '../src/lambda/db';
 import { DynamoDb } from '../src/lambda/dynamodb';
+import { memberJoin } from '../src/lambda/challenges';
 import { route } from '../src/lambda/http';
 import { updateProfile } from '../src/lambda/profile';
 import { syncEntries } from '../src/lambda/sync';
@@ -298,5 +299,46 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     expect((await db.dayTotalsBetween('b1', '2026-10-01', '2026-10-31')).map((dayTotal) => dayTotal.day)).toEqual(['2026-10-01', '2026-10-15', '2026-10-31']);
     expect(await db.dayTotalsBetween('b1', '0000-01-01', '9999-12-31')).toHaveLength(5);
     expect(await db.dayTotalsBetween('b3', '0000-01-01', '9999-12-31')).toEqual([]);
+  });
+
+  it('creates a challenge with its first member, and joins and leaves in single transactions', async () => {
+    const clock = { now: () => 1_000 };
+    const challenge = { id: 'g-dddddddddddddddd', exerciseId: 'x-dddddddddddddddd', fromDay: '2026-10-01', toDay: '2026-10-31', target: 1000, createdBy: 'ga', createdAt: 1_000 };
+    const creatorJoin = memberJoin('ga', challenge, clock);
+    await db.createChallenge(challenge, creatorJoin);
+    await expect(db.createChallenge(challenge, memberJoin('ga', challenge, clock))).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.getChallenge(challenge.id)).toEqual(challenge);
+    expect(await db.getMembership('ga', challenge.id)).toEqual(creatorJoin.membership);
+    expect(await db.getLink(creatorJoin.membership.linkCodeHash)).toEqual(creatorJoin.link);
+    expect(await db.adoptedDefinitionKeys('ga')).toEqual([{ exerciseId: 'x-dddddddddddddddd' }]);
+
+    const raced = await Promise.allSettled([1, 2, 3].map(() => db.joinChallenge(memberJoin('gb', challenge, clock, 'ga'))));
+    expect(raced.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(await db.isFriend('gb', 'ga')).toBe(true);
+    expect((await db.challengeMemberIds(challenge.id)).sort()).toEqual(['ga', 'gb']);
+    // Joining a challenge that doesn't exist, or befriending someone who already is a friend, writes nothing.
+    await expect(db.joinChallenge(memberJoin('gc', { ...challenge, id: 'g-nonenonenonenone' }, clock))).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.befriend('gc', 'ga', 1);
+    await expect(db.joinChallenge(memberJoin('gc', challenge, clock, 'ga'))).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.getMembership('gc', challenge.id)).toBeNull();
+    expect(await db.membershipsOf('gc')).toEqual([]);
+
+    const benMembership = (await db.getMembership('gb', challenge.id))!;
+    await db.leaveChallenge('gb', benMembership);
+    expect(await db.challengeMemberIds(challenge.id)).toEqual(['ga']);
+    expect(await db.getLink(benMembership.linkCodeHash)).toBeNull();
+    expect(await db.membershipsOf('ga')).toEqual([creatorJoin.membership]);
+    expect([...(await db.getChallenges([challenge.id, 'g-nonenonenonenone'])).keys()]).toEqual([challenge.id]);
+  });
+
+  it('signs up into a challenge in the account’s own transaction', async () => {
+    const clock = { now: () => 2_000 };
+    const challenge = { id: 'g-eeeeeeeeeeeeeeee', exerciseId: 'pull-up', fromDay: '2026-10-01', toDay: '2026-10-31', createdBy: 'ga', createdAt: 1 };
+    await db.createChallenge(challenge, memberJoin('ga', challenge, clock));
+    const user = { id: 's9', name: 'Sy', createdAt: 2_000, timeZone: 'Europe/London', joinedVia: { kind: 'challenge' as const, linkCreatedBy: 'ga' } };
+    await db.createAccount({ user, passkey: { credentialId: 'cred-s9', publicKey: 'pk', counter: 0, createdAt: 2_000 }, tokenHash: 'tok-s9', sweepDay: '2026-11-07', friendId: 'ga', challengeJoin: memberJoin('s9', challenge, clock) });
+    expect(await db.isFriend('s9', 'ga')).toBe(true);
+    expect(await db.getMembership('s9', challenge.id)).toMatchObject({ toDay: '2026-10-31' });
+    expect(await db.adoptedDefinitionKeys('s9')).toEqual([]);
   });
 });

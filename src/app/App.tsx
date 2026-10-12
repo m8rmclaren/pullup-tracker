@@ -4,6 +4,7 @@ import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
 import { parseDeviceLink, parseJoinLink } from './api';
 import { ProfileSheet } from './Board';
+import { ChallengeSheet, CreateChallengeSheet } from './Challenges';
 import { FriendsTab, LinkSheet } from './Friends';
 import { describeSet, unitLookup } from './labels';
 import { useNow, useTracker } from './hooks';
@@ -21,6 +22,8 @@ type SheetState =
   | { kind: 'device'; code: string }
   | { kind: 'link'; code: string }
   | { kind: 'profile'; userId: string }
+  | { kind: 'challenge'; challengeId: string }
+  | { kind: 'newChallenge' }
   | null;
 
 interface Toast {
@@ -46,6 +49,8 @@ export function App({ tracker }: { tracker: Tracker }) {
     return deviceCode ? { kind: 'device', code: deviceCode } : { kind: 'link', code: joinCode! };
   });
   const [toast, setToast] = useState<Toast | null>(null);
+  // Bumped when something the Friends tab shows changed elsewhere (a redeem, a new or left challenge), so it refetches.
+  const [friendsVersion, setFriendsVersion] = useState(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const entries = useMemo(() => tracker.allEntries(), [tracker, version]);
@@ -108,7 +113,14 @@ export function App({ tracker }: { tracker: Tracker }) {
         ) : tab === 'trends' ? (
           <Trends entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
         ) : (
-          <FriendsTab tracker={tracker} onOpenSettings={() => setSheet({ kind: 'settings' })} onOpenProfile={(userId) => setSheet({ kind: 'profile', userId })} />
+          <FriendsTab
+            key={friendsVersion}
+            tracker={tracker}
+            onOpenSettings={() => setSheet({ kind: 'settings' })}
+            onOpenProfile={(userId) => setSheet({ kind: 'profile', userId })}
+            onOpenChallenge={(challengeId) => setSheet({ kind: 'challenge', challengeId })}
+            onCreateChallenge={() => setSheet({ kind: 'newChallenge' })}
+          />
         )}
       </main>
 
@@ -170,15 +182,39 @@ export function App({ tracker }: { tracker: Tracker }) {
       ) : null}
       {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={closeSheet} onOpenLink={(link) => setSheet(link)} /> : null}
       {sheet?.kind === 'device' ? <DeviceLinkSheet tracker={tracker} code={sheet.code} onClose={closeSheet} /> : null}
+      {sheet?.kind === 'challenge' ? (
+        <ChallengeSheet
+          tracker={tracker}
+          challengeId={sheet.challengeId}
+          onClose={closeSheet}
+          onLeft={() => {
+            setFriendsVersion((current) => current + 1);
+            setSheet(null);
+          }}
+          onOpenProfile={(userId) => setSheet({ kind: 'profile', userId })}
+        />
+      ) : null}
+      {sheet?.kind === 'newChallenge' ? (
+        <CreateChallengeSheet
+          tracker={tracker}
+          onClose={closeSheet}
+          onCreated={(challengeId) => {
+            setFriendsVersion((current) => current + 1);
+            setSheet({ kind: 'challenge', challengeId });
+          }}
+        />
+      ) : null}
       {sheet?.kind === 'profile' ? <ProfileSheet tracker={tracker} userId={sheet.userId} onClose={closeSheet} /> : null}
       {sheet?.kind === 'link' ? (
         <LinkSheet
           tracker={tracker}
           code={sheet.code}
           onClose={closeSheet}
-          onRedeemed={(message) => {
+          onRedeemed={(message, challengeId) => {
             setTab('friends');
+            setFriendsVersion((current) => current + 1);
             showToast(message);
+            setSheet(challengeId ? { kind: 'challenge', challengeId } : null);
           }}
         />
       ) : null}

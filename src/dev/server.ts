@@ -29,7 +29,9 @@ class DiskDb extends MemoryDb {
     this.invites = new Map(snapshot.invites as never);
     this.definitions = new Map(snapshot.definitions as never);
     this.adoptions = nested(snapshot.adoptions);
+    this.pendingChallenges = new Map(snapshot.pendingChallenges as never);
     this.challenges = new Map(snapshot.challenges as never);
+    this.memberships = nested(snapshot.memberships);
     this.passkeys = nested(snapshot.passkeys);
     this.sweepMarkers = new Map((snapshot.sweepMarkers ?? []).map(([day, userIds]) => [day, new Set(userIds as string[])]));
     this.links = new Map(snapshot.links as never);
@@ -49,7 +51,9 @@ class DiskDb extends MemoryDb {
         invites: [...this.invites],
         definitions: [...this.definitions],
         adoptions: flat(this.adoptions),
+        pendingChallenges: [...this.pendingChallenges],
         challenges: [...this.challenges],
+        memberships: flat(this.memberships),
         passkeys: flat(this.passkeys),
         sweepMarkers: [...this.sweepMarkers].map(([day, userIds]) => [day, [...userIds]]),
         links: [...this.links],

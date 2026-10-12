@@ -6,7 +6,8 @@ import { leaderboard, viewProfile } from './boards';
 import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
 import { RequestError } from './errors';
 import { friendsResponse, rotateFriendLink } from './friends';
-import { redeemLink, resolveLink } from './links';
+import { challengeBoard, challengeLink, createChallenge, leaveChallenge, listChallenges } from './challenges';
+import { redeemLink, resolveLink } from './redeem';
 import { type WebAuthnConfig, finishLogin, finishRegister, finishSignup, listPasskeys, startLogin, startRegister, startSignup } from './passkeys';
 import { accountOf, updateProfile } from './profile';
 import { hashToken, isPlausibleSecret } from './auth';
@@ -95,6 +96,11 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
       return ok({});
     }),
     '/api/friends/rotate-link': signedIn(async (userId) => ok({ friendLink: await rotateFriendLink(deps.db, userId, clock) })),
+    '/api/challenges/create': signedIn(async (userId, body) => ok(await createChallenge(deps.db, userId, body, clock))),
+    '/api/challenges/list': signedIn(async (userId) => ok({ challenges: await listChallenges(deps.db, userId, clock) })),
+    '/api/challenges/link': signedIn(async (userId, body) => ok(await challengeLink(deps.db, userId, body.challengeId))),
+    '/api/challenges/leave': signedIn(async (userId, body) => ok(await leaveChallenge(deps.db, userId, body.challengeId))),
+    '/api/challenges/board': signedIn(async (userId, body) => ok(await challengeBoard(deps.db, userId, body.challengeId))),
     '/api/leaderboard': signedIn(async (userId, body) => ok(await leaderboard(deps.db, userId, body))),
     '/api/profile/view': signedIn(async (userId, body) => ok(await viewProfile(deps.db, userId, body, clock))),
     '/api/links/resolve': async (body) => {

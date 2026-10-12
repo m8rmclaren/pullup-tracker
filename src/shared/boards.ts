@@ -135,3 +135,16 @@ export function evaluateBoard(spec: BoardSpec, members: BoardMember[], nowMs: nu
 export function groupTotal(exerciseId: string, window: { fromDay: string; toDay: string }, members: BoardMember[]): number {
   return members.reduce((total, member) => total + countIn(daysInWindow(member, window), exerciseId), 0);
 }
+
+/**
+ * A challenge board's members as board members. The server sends each member's days already cut
+ * down to the challenge's exercise, with no zone or goal, which is all a fixed window needs.
+ */
+export function challengeBoardMembers(exerciseId: string, members: { id: string; name: string; days: ({ day: string } & ExerciseDayTotal)[] }[]): BoardMember[] {
+  return members.map((member) => ({
+    id: member.id,
+    name: member.name,
+    timeZone: 'UTC',
+    days: member.days.map(({ day, ...share }) => ({ day, reps: 0, sets: share.sets, bestSetReps: 0, byExercise: { [exerciseId]: share } })),
+  }));
+}

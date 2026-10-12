@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { encode } from 'uqr';
-import { MAX_NAME_LENGTH, type Friend, type ResolvedLink, cleanName } from '../shared/model';
+import { MAX_NAME_LENGTH, type Friend, type RedeemedLink, type ResolvedLink, cleanName } from '../shared/model';
 import { fetchFriends, isPasskeySupported, joinLink, passkeyErrorMessage, redeemLink, removeFriend, resolveLink, rotateFriendLink, shareUrl, signInWithPasskey, signUpWithPasskey } from './api';
 import { FriendsBoard } from './Board';
+import { ChallengesCard, GroupProgress, challengeExercise, formatWindow } from './Challenges';
 import { Sheet } from './sheets';
 import type { Tracker } from './tracker';
 
@@ -33,7 +34,15 @@ function readCachedFriends(accountId: string | undefined): Friend[] | null {
   }
 }
 
-export function FriendsTab({ tracker, onOpenSettings, onOpenProfile }: { tracker: Tracker; onOpenSettings: () => void; onOpenProfile: (userId: string) => void }) {
+interface FriendsTabProps {
+  tracker: Tracker;
+  onOpenSettings: () => void;
+  onOpenProfile: (userId: string) => void;
+  onOpenChallenge: (challengeId: string) => void;
+  onCreateChallenge: () => void;
+}
+
+export function FriendsTab({ tracker, onOpenSettings, onOpenProfile, onOpenChallenge, onCreateChallenge }: FriendsTabProps) {
   const token = tracker.settings.token;
   const accountId = tracker.account?.id;
   const [friends, setFriends] = useState<Friend[] | null>(() => readCachedFriends(accountId));
@@ -100,6 +109,7 @@ export function FriendsTab({ tracker, onOpenSettings, onOpenProfile }: { tracker
   return (
     <div class="friends">
       <FriendsBoard tracker={tracker} onOpenProfile={onOpenProfile} />
+      <ChallengesCard tracker={tracker} onOpenChallenge={onOpenChallenge} onCreate={onCreateChallenge} />
       <section class="card">
         <header class="card__head">
           <h2>Friends</h2>
@@ -178,7 +188,7 @@ export function FriendsTab({ tracker, onOpenSettings, onOpenProfile }: { tracker
  * a name and a passkey make an account that comes with the friendship, or a passkey sign-in
  * redeems it afterwards.
  */
-export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tracker; code: string; onClose: () => void; onRedeemed: (message: string) => void }) {
+export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tracker; code: string; onClose: () => void; onRedeemed: (message: string, challengeId?: string) => void }) {
   const [resolved, setResolved] = useState<ResolvedLink | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -190,11 +200,11 @@ export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tra
     resolveLink(code).then(setResolved, (resolveError) => setError(resolveError instanceof Error ? resolveError.message : String(resolveError)));
   }, [code]);
 
-  const finish = (friendName: string) => {
-    onRedeemed(`You and ${friendName} are friends.`);
-    onClose();
+  const finish = (redeemed: RedeemedLink) => {
+    if (redeemed.challenge) onRedeemed(`You're in. You and ${redeemed.friend.name} are friends.`, redeemed.challenge.challenge.id);
+    else onRedeemed(`You and ${redeemed.friend.name} are friends.`);
   };
-  const redeemWith = async (sessionToken: string) => finish((await redeemLink(code, sessionToken)).friend.name);
+  const redeemWith = async (sessionToken: string) => finish(await redeemLink(code, sessionToken));
   const act = async (action: 'redeem' | 'signup' | 'signin') => {
     setBusyAction(action);
     setError(null);
@@ -204,7 +214,7 @@ export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tra
         const response = await signUpWithPasskey({ name: cleanedName!, timeZone: tracker.deviceTimeZone, dailyGoalReps: tracker.goal(), linkCode: code });
         tracker.signIn(response.token, response.account);
         void tracker.syncNow();
-        if (response.redeemed) finish(response.redeemed.friend.name);
+        if (response.redeemed) finish(response.redeemed);
         else {
           setError('Your account is made, but this link stopped working along the way.');
           setBusyAction(null);
@@ -222,9 +232,22 @@ export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tra
     }
   };
 
+  const summary = resolved?.challenge;
+  const exercise = summary ? challengeExercise(summary.challenge, summary.definition, tracker) : undefined;
+  const description = summary?.definition && 'description' in summary.definition ? summary.definition.description : undefined;
+
   return (
-    <Sheet title={resolved ? `${resolved.inviterName} invited you` : 'Invitation'} onClose={onClose}>
-      {resolved ? (
+    <Sheet title={summary ? (exercise?.name ?? 'A challenge') : resolved ? `${resolved.inviterName} invited you` : 'Invitation'} onClose={onClose}>
+      {summary ? (
+        <div class="link-challenge">
+          <p class="muted small">{exercise?.measure === 'time' ? 'Timed' : `Counted in ${exercise?.unit ?? 'rep'}s`}</p>
+          {description ? <p class="link-lead">{description}</p> : null}
+          <GroupProgress groupTotal={summary.groupTotal} challenge={summary.challenge} exercise={exercise} />
+          <p class="link-lead">
+            {summary.memberCount} {summary.memberCount === 1 ? 'person' : 'people'} · {formatWindow(summary.challenge)}. <b>{resolved!.inviterName}</b> wants you in.
+          </p>
+        </div>
+      ) : resolved ? (
         <p class="link-lead">
           <b>{resolved.inviterName}</b> wants to be friends on Pull-ups. Friends see each other's daily totals and boards.
         </p>
@@ -234,7 +257,7 @@ export function LinkSheet({ tracker, code, onClose, onRedeemed }: { tracker: Tra
       {resolved && token ? (
         <div class="sheet__actions">
           <button type="button" class="btn btn--primary" disabled={busyAction !== null} onClick={() => void act('redeem')}>
-            {busyAction ? 'Adding…' : `Add ${resolved.inviterName}`}
+            {busyAction ? 'Joining…' : summary ? 'Join the challenge' : `Add ${resolved.inviterName}`}
           </button>
         </div>
       ) : null}

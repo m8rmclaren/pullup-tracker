@@ -5,6 +5,7 @@ import { MAX_DAILY_GOAL_REPS, MIN_DAILY_GOAL_REPS } from '../shared/profile';
 import { DEFAULT_TIME_ZONE, addDays, dayKey, isValidTimeZone } from '../shared/time';
 import { hashToken, isPlausibleSecret, newSecret, newUserId } from './auth';
 import { type ChallengePurpose, type Db, type NewAccount, type Passkey, type PendingChallenge, type User, PreconditionFailed } from './db';
+import { MAX_CHALLENGE_MEMBERS, challengeSummary, memberJoin } from './challenges';
 import { bumpLinkCounter, liveLink } from './links';
 import { RequestError } from './errors';
 import { accountOf } from './profile';
@@ -117,8 +118,9 @@ export async function startSignup(db: Db, config: WebAuthnConfig, body: Record<s
 
 /**
  * Verifies the new passkey, then writes the account, the passkey and this device's token
- * together, with the friendship when it came through a link. A link that died in the
- * meantime doesn't stop the sign-up; the account is just made without it.
+ * together, with the friendship (and for a challenge link, the membership) when it came
+ * through a link. A link that died in the meantime doesn't stop the sign-up; the account is
+ * just made without it, and a challenge that filled up is skipped.
  */
 export async function finishSignup(db: Db, config: WebAuthnConfig, body: Record<string, unknown>, clock: Clock): Promise<SignupResponse> {
   const { credential, challenge, pending } = await takeChallengeFor(db, body.credential, 'signup', clock);
@@ -128,14 +130,17 @@ export async function finishSignup(db: Db, config: WebAuthnConfig, body: Record<
   const token = newSecret();
   const account: NewAccount = { user, passkey, tokenHash: hashToken(token), sweepDay: addDays(dayKey(clock.now(), 'UTC'), EMPTY_ACCOUNT_SWEEP_DAYS) };
   const viaLink = pending.linkCodeHash ? await liveLink(db, pending.linkCodeHash, clock) : null;
+  const linkedChallenge = viaLink?.link.challengeId ? await db.getChallenge(viaLink.link.challengeId) : null;
   if (viaLink) {
     user.joinedVia = { kind: viaLink.link.kind, linkCreatedBy: viaLink.creator.id };
     account.friendId = viaLink.creator.id;
+    if (linkedChallenge && (await db.challengeMemberIds(linkedChallenge.id)).length < MAX_CHALLENGE_MEMBERS) account.challengeJoin = memberJoin(user.id, linkedChallenge, clock);
   }
   await db.createAccount(account);
   if (!viaLink) return { token, account: accountOf(user) };
   await bumpLinkCounter(db, pending.linkCodeHash!, 'joinCount');
-  return { token, account: accountOf(user), redeemed: { kind: viaLink.link.kind, friend: { id: viaLink.creator.id, name: viaLink.creator.name } } };
+  const redeemed = { kind: viaLink.link.kind, friend: { id: viaLink.creator.id, name: viaLink.creator.name }, ...(account.challengeJoin && linkedChallenge ? { challenge: await challengeSummary(db, linkedChallenge) } : {}) };
+  return { token, account: accountOf(user), redeemed };
 }
 
 /** No allowCredentials: the device offers whichever passkey it has for the domain, so there's no username to type. */

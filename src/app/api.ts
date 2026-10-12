@@ -1,5 +1,5 @@
 import { type PublicKeyCredentialCreationOptionsJSON, type PublicKeyCredentialRequestOptionsJSON, startAuthentication, startRegistration } from '@simplewebauthn/browser';
-import type { Account, FriendsResponse, LeaderboardResponse, ProfileViewResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
+import type { Account, ChallengeBoardResponse, ChallengeListItem, ChallengesResponse, FriendsResponse, LeaderboardResponse, ProfileViewResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
 import type { ProfilePatch } from '../shared/profile';
 import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
@@ -129,3 +129,13 @@ export async function shareUrl(url: string): Promise<string | null> {
 export const fetchLeaderboard = (window: { fromDay: string; toDay: string }, token: string) => post<LeaderboardResponse>('/api/leaderboard', window, token);
 
 export const fetchProfile = (userId: string, token: string) => post<ProfileViewResponse>('/api/profile/view', { userId }, token);
+
+export const fetchChallenges = (token: string) => post<ChallengesResponse>('/api/challenges/list', {}, token);
+
+export const createChallenge = (fields: { exerciseId: string; fromDay: string; toDay: string; target?: number }, token: string) => post<ChallengeListItem>('/api/challenges/create', fields, token);
+
+export const fetchChallengeBoard = (challengeId: string, token: string) => post<ChallengeBoardResponse>('/api/challenges/board', { challengeId }, token);
+
+export const leaveChallenge = (challengeId: string, token: string) => post<object>('/api/challenges/leave', { challengeId }, token);
+
+export const fetchChallengeLink = (challengeId: string, token: string) => post<{ link: string }>('/api/challenges/link', { challengeId }, token);

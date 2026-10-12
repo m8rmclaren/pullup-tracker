@@ -1376,3 +1376,65 @@ input:focus-visible {
   text-transform: uppercase;
   color: var(--muted);
 }
+
+/* ---------- challenges ---------- */
+
+.challenge-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 0;
+  min-width: 0;
+}
+
+.group-progress {
+  margin: 10px 0 14px;
+}
+
+.group-progress__total {
+  font-size: 26px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.group-progress__bar {
+  margin-top: 8px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.group-progress__bar i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  background: var(--accent);
+}
+
+.seg--full {
+  display: flex;
+  margin-bottom: 4px;
+}
+
+.seg--full button {
+  flex: 1;
+  padding: 6px 4px;
+}
+
+.field-row {
+  display: flex;
+  gap: 10px;
+}
+
+.field-row .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.link-challenge .link-lead {
+  margin: 6px 0;
+}
