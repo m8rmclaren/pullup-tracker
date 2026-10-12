@@ -1,5 +1,20 @@
-import type { Entry } from './model';
+import { PULL_UP, RING_UNIT, builtInExercise } from './catalog';
+import { type Entry, exerciseIdOf } from './model';
 import { addDays, dayKey, daysBetween, startOfWeek } from './time';
+
+/** An exercise's unit if it is counted, undefined if it is timed or unknown. */
+export type UnitLookup = (exerciseId: string) => string | undefined;
+
+export const builtInUnit: UnitLookup = (exerciseId) => builtInExercise(exerciseId)?.unit;
+
+export type CountedEntry = Entry & { reps: number };
+
+/** A live counted set in an exercise whose unit is "rep": what the ring and its stats sum. */
+export function isRingEntry(entry: Entry, unitOf: UnitLookup = builtInUnit): entry is CountedEntry {
+  return !entry.deleted && entry.reps !== undefined && unitOf(exerciseIdOf(entry)) === RING_UNIT;
+}
+
+const isLivePullUp = (entry: Entry): entry is CountedEntry => !entry.deleted && entry.reps !== undefined && exerciseIdOf(entry) === PULL_UP;
 
 export interface DayTotal {
   day: string;
@@ -13,10 +28,11 @@ export function liveEntries(entries: Iterable<Entry>): Entry[] {
   return undeleted;
 }
 
-export function dailyTotals(entries: Iterable<Entry>, timeZone: string): Map<string, DayTotal> {
+/** Ring reps and sets per day. */
+export function dailyTotals(entries: Iterable<Entry>, timeZone: string, unitOf: UnitLookup = builtInUnit): Map<string, DayTotal> {
   const totals = new Map<string, DayTotal>();
   for (const entry of entries) {
-    if (entry.deleted) continue;
+    if (!isRingEntry(entry, unitOf)) continue;
     const day = dayKey(entry.doneAt, timeZone);
     const dayTotal = totals.get(day) ?? { day, reps: 0, sets: 0 };
     dayTotal.reps += entry.reps;
@@ -68,8 +84,9 @@ export interface Stats {
   firstDay: string | null;
 }
 
-export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number, timeZone: string): Stats {
-  const totals = dailyTotals(entries, timeZone);
+/** Ring stats: only counted sets in rep-unit exercises (see isRingEntry). */
+export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number, timeZone: string, unitOf: UnitLookup = builtInUnit): Stats {
+  const totals = dailyTotals(entries, timeZone, unitOf);
   const todayKey = dayKey(nowMs, timeZone);
   const today = totals.get(todayKey) ?? { day: todayKey, reps: 0, sets: 0 };
 
@@ -143,12 +160,12 @@ export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: 
   };
 }
 
-/** The rep count logged most often in the last 30 days, for highlighting the usual button. */
+/** The pull-up rep count logged most often in the last 30 days, for highlighting the usual button. */
 export function usualReps(entries: Iterable<Entry>, nowMs: number, timeZone: string): number | null {
   const cutoff = addDays(dayKey(nowMs, timeZone), -29);
   const setCountsByReps = new Map<number, number>();
   for (const entry of entries) {
-    if (entry.deleted || dayKey(entry.doneAt, timeZone) < cutoff) continue;
+    if (!isLivePullUp(entry) || dayKey(entry.doneAt, timeZone) < cutoff) continue;
     setCountsByReps.set(entry.reps, (setCountsByReps.get(entry.reps) ?? 0) + 1);
   }
   let mostCommonReps: number | null = null;
@@ -168,12 +185,12 @@ export interface HeaviestSet {
   day: string;
 }
 
-/** Most added weight in one set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
+/** Most added weight in one pull-up set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
 export function heaviestSet(entries: Iterable<Entry>, nowMs: number, timeZone: string): HeaviestSet | null {
   const todayKey = dayKey(nowMs, timeZone);
   let heaviest: HeaviestSet | null = null;
   for (const entry of entries) {
-    if (entry.deleted || !entry.addedWeightLbs) continue;
+    if (!isLivePullUp(entry) || !entry.addedWeightLbs) continue;
     const day = dayKey(entry.doneAt, timeZone);
     if (day > todayKey) continue;
     if (!heaviest || entry.addedWeightLbs > heaviest.addedWeightLbs || (entry.addedWeightLbs === heaviest.addedWeightLbs && (entry.reps > heaviest.reps || (entry.reps === heaviest.reps && day > heaviest.day)))) {

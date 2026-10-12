@@ -1,0 +1,43 @@
+{
+  "exercises": [
+    { "id": "pull-up", "name": "Pull-up", "measure": "count", "unit": "rep", "variationGroups": ["grip", "tempo", "assistance", "form"] },
+    { "id": "chin-up", "name": "Chin-up", "measure": "count", "unit": "rep", "variationGroups": ["tempo", "assistance", "form"] },
+    { "id": "muscle-up", "name": "Muscle-up", "measure": "count", "unit": "rep", "variationGroups": ["tempo", "assistance"] },
+    { "id": "inverted-row", "name": "Inverted row", "measure": "count", "unit": "rep", "variationGroups": ["grip", "tempo", "form"] },
+    { "id": "push-up", "name": "Push-up", "measure": "count", "unit": "rep", "variationGroups": ["grip", "tempo", "assistance", "form"] },
+    { "id": "dip", "name": "Dip", "measure": "count", "unit": "rep", "variationGroups": ["tempo", "assistance"] },
+    { "id": "pike-push-up", "name": "Pike push-up", "measure": "count", "unit": "rep", "variationGroups": ["tempo"] },
+    { "id": "handstand-push-up", "name": "Handstand push-up", "measure": "count", "unit": "rep", "variationGroups": ["tempo", "assistance"] },
+    { "id": "squat", "name": "Squat", "measure": "count", "unit": "rep", "variationGroups": ["tempo"] },
+    { "id": "pistol-squat", "name": "Pistol squat", "measure": "count", "unit": "rep", "variationGroups": ["tempo", "assistance"] },
+    { "id": "lunge", "name": "Lunge", "measure": "count", "unit": "rep", "variationGroups": ["tempo"] },
+    { "id": "hanging-leg-raise", "name": "Hanging leg raise", "measure": "count", "unit": "rep", "variationGroups": ["tempo"] },
+    { "id": "toes-to-bar", "name": "Toes-to-bar", "measure": "count", "unit": "rep", "variationGroups": ["tempo"] },
+    { "id": "dead-hang", "name": "Dead hang", "measure": "time", "variationGroups": ["grip", "form"] },
+    { "id": "plank", "name": "Plank", "measure": "time", "variationGroups": [] },
+    { "id": "hollow-hold", "name": "Hollow hold", "measure": "time", "variationGroups": [] },
+    { "id": "l-sit", "name": "L-sit", "measure": "time", "variationGroups": ["progression"] },
+    { "id": "handstand", "name": "Handstand", "measure": "time", "variationGroups": [] },
+    { "id": "front-lever", "name": "Front lever", "measure": "time", "variationGroups": ["progression"] },
+    { "id": "back-lever", "name": "Back lever", "measure": "time", "variationGroups": ["progression"] },
+    { "id": "planche", "name": "Planche", "measure": "time", "variationGroups": ["progression"] }
+  ],
+  "variations": [
+    { "id": "wide-grip", "name": "Wide grip", "group": "grip" },
+    { "id": "close-grip", "name": "Close grip", "group": "grip" },
+    { "id": "neutral-grip", "name": "Neutral grip", "group": "grip" },
+    { "id": "mixed-grip", "name": "Mixed grip", "group": "grip" },
+    { "id": "tuck", "name": "Tuck", "group": "progression" },
+    { "id": "advanced-tuck", "name": "Advanced tuck", "group": "progression" },
+    { "id": "one-leg", "name": "One leg", "group": "progression" },
+    { "id": "straddle", "name": "Straddle", "group": "progression" },
+    { "id": "full", "name": "Full", "group": "progression" },
+    { "id": "negative", "name": "Negative", "group": "tempo" },
+    { "id": "pause", "name": "Pause", "group": "tempo" },
+    { "id": "explosive", "name": "Explosive", "group": "tempo" },
+    { "id": "band", "name": "Band", "group": "assistance" },
+    { "id": "feet-assisted", "name": "Feet assisted", "group": "assistance" },
+    { "id": "archer", "name": "Archer", "group": "form" },
+    { "id": "one-arm", "name": "One arm", "group": "form" }
+  ]
+}

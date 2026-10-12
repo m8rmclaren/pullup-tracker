@@ -110,7 +110,7 @@ describe('syncEntries', () => {
     await Promise.all(pushes.map((pushedEntries) => syncEntries(db, USER_ID, DENVER, pushedEntries, 0)));
     const allEntries = (await syncEntries(db, USER_ID, DENVER, [], 0)).entries;
     expect(allEntries).toHaveLength(12);
-    expect((await db.getDayTotal(USER_ID, '2026-10-08'))!.reps).toBe(allEntries.reduce((reps, entry) => reps + entry.reps, 0));
+    expect((await db.getDayTotal(USER_ID, '2026-10-08'))!.reps).toBe(allEntries.reduce((reps, entry) => reps + entry.reps!, 0));
   });
 
   it('a concurrent edit and delete converge to the newer one', async () => {
@@ -136,6 +136,19 @@ describe('syncEntries', () => {
     await syncEntries(db, USER_ID, DENVER, [makeEntry(OCT8, 5)], 0);
     await Promise.all([recomputeDayTotal(db, USER_ID, '2026-10-08', DENVER), syncEntries(db, USER_ID, DENVER, [makeEntry(OCT8, 6)], 0), recomputeDayTotal(db, USER_ID, '2026-10-08', DENVER)]);
     expect((await db.getDayTotal(USER_ID, '2026-10-08'))!.reps).toBe(11);
+  });
+});
+
+describe('day totals and the ring', () => {
+  it('sums only rep-unit counted sets into reps and bestSetReps, and counts every set', async () => {
+    const db = new MemoryDb();
+    await syncEntries(db, USER_ID, DENVER, [
+      makeEntry(OCT8, 8),
+      makeEntry(OCT8, 20, { exerciseId: 'push-up' }),
+      { id: 'hold1', doneAt: OCT8, updatedAt: 1, exerciseId: 'plank', holdSeconds: 600 },
+      makeEntry(OCT8, 50, { exerciseId: 'x-k3p7abcdefgh2345' }),
+    ], 0);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 28, sets: 4, bestSetReps: 20 });
   });
 });
 
@@ -181,16 +194,43 @@ describe('route', () => {
   it('syncs per account, and one user never sees another user’s sets', async () => {
     const db = setup();
     const mine = makeEntry(OCT8, 9);
-    const userOneSync = await post(db, '/api/sync', { pushedEntries: [mine], sinceCursor: 0 }, USER_ONE_TOKEN);
+    const userOneSync = await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [mine], sinceCursor: 0 }, USER_ONE_TOKEN);
     expect(userOneSync).toMatchObject({ status: 200, body: { entries: [mine], account: { id: 'u1', name: 'One' } } });
-    const userTwoSync = await post(db, '/api/sync', { pushedEntries: [], sinceCursor: 0 }, USER_TWO_TOKEN);
+    const userTwoSync = await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 }, USER_TWO_TOKEN);
     expect(userTwoSync).toMatchObject({ status: 200, body: { entries: [], account: { id: 'u2' } } });
+  });
+
+  it('turns away a client that predates protocol v2, before it can write', async () => {
+    const db = setup();
+    const v1Body = { pushedEntries: [makeEntry(OCT8, 9)], sinceCursor: 0 };
+    expect(await post(db, '/api/sync', v1Body, USER_ONE_TOKEN)).toMatchObject({ status: 426, body: { protocolVersion: 2 } });
+    expect((await post(db, '/api/sync', { ...v1Body, protocolVersion: 1 }, USER_ONE_TOKEN)).status).toBe(426);
+    expect((await post(db, '/api/sync', { ...v1Body, protocolVersion: '2' }, USER_ONE_TOKEN)).status).toBe(426);
+    expect((await post(db, '/api/sync', v1Body)).status).toBe(426);
+    expect(db.entries.size).toBe(0);
+    expect((await post(db, '/api/sync', { ...v1Body, protocolVersion: 2 }, USER_ONE_TOKEN)).status).toBe(200);
+  });
+
+  it('stores and returns every v2 field, and keeps a v1-shaped set reading as a pull-up', async () => {
+    const db = setup();
+    const v1Set = makeEntry(OCT8, 7);
+    const chinUp = makeEntry(OCT8, 5, { exerciseId: 'chin-up', variationIds: ['pause', 'band'], addedWeightLbs: 10 });
+    const lever: Entry = { id: 'lever1', doneAt: OCT8, updatedAt: 1, exerciseId: 'front-lever', variationIds: ['tuck'], holdSeconds: 45 };
+    const synced = await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [v1Set, chinUp, lever], sinceCursor: 0 }, USER_ONE_TOKEN);
+    expect((synced.body as { entries: Entry[] }).entries).toEqual([v1Set, { ...chinUp, variationIds: ['band', 'pause'] }, lever]);
+    expect(db.entries.get('u1')!.get(v1Set.id)).not.toHaveProperty('exerciseId');
+  });
+
+  it('rejects an entry whose measure doesn’t match its built-in exercise', async () => {
+    const db = setup();
+    const repsOnAHold = makeEntry(OCT8, 5, { exerciseId: 'plank' });
+    expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [repsOnAHold], sinceCursor: 0 }, USER_ONE_TOKEN)).status).toBe(400);
   });
 
   it('rejects a missing or unknown token before touching storage', async () => {
     const db = setup();
-    expect((await post(db, '/api/sync', { pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 })).status).toBe(401);
-    expect((await post(db, '/api/sync', { pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 }, USER_ONE_TOKEN + 'x')).status).toBe(401);
+    expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 })).status).toBe(401);
+    expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(OCT8)], sinceCursor: 0 }, USER_ONE_TOKEN + 'x')).status).toBe(401);
     expect((await post(db, '/api/invite', { kind: 'friend' })).status).toBe(401);
     expect(db.entries.size).toBe(0);
   });
@@ -198,9 +238,9 @@ describe('route', () => {
   it('rejects invalid bodies and unknown routes', async () => {
     const db = setup();
     expect((await route({ method: 'POST', path: '/api/sync', headers: { 'x-pullup-token': USER_ONE_TOKEN }, body: '{' }, { db })).status).toBe(400);
-    expect((await post(db, '/api/sync', { pushedEntries: [{ id: 'x', reps: 999 }], sinceCursor: 0 }, USER_ONE_TOKEN)).status).toBe(400);
-    expect((await post(db, '/api/sync', { pushedEntries: [], sinceCursor: -1 }, USER_ONE_TOKEN)).status).toBe(400);
-    expect((await post(db, '/api/sync', { pushedEntries: [] }, USER_ONE_TOKEN)).status).toBe(400);
+    expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [{ id: 'x', reps: 999 }], sinceCursor: 0 }, USER_ONE_TOKEN)).status).toBe(400);
+    expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [], sinceCursor: -1 }, USER_ONE_TOKEN)).status).toBe(400);
+    expect((await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [] }, USER_ONE_TOKEN)).status).toBe(400);
     expect((await post(db, '/api/invite', { kind: 'admin' }, USER_ONE_TOKEN)).status).toBe(400);
     expect((await route({ method: 'GET', path: '/api/sync', headers: {}, body: '' }, { db })).status).toBe(405);
     expect((await post(db, '/api/other', {}, USER_ONE_TOKEN)).status).toBe(404);
@@ -209,7 +249,7 @@ describe('route', () => {
   it('keeps a pre-zone account on Denver and reports its zone', async () => {
     const db = setup();
     const lateEvening = makeEntry(Date.parse('2026-10-09T05:30:00Z'), 4); // 23:30 in Denver
-    const synced = await post(db, '/api/sync', { pushedEntries: [lateEvening], sinceCursor: 0 }, USER_ONE_TOKEN);
+    const synced = await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [lateEvening], sinceCursor: 0 }, USER_ONE_TOKEN);
     expect(synced).toMatchObject({ status: 200, body: { account: { id: 'u1', timeZone: 'America/Denver' } } });
     expect(await db.getDayTotal('u1', '2026-10-08')).toMatchObject({ reps: 4 });
     expect(db.users.get('u1')!.timeZone).toBeUndefined();
@@ -221,7 +261,7 @@ describe('route', () => {
     const london = await post(db, '/api/join', { code: await inviteCode(), name: 'Ana', timeZone: 'Europe/London' });
     expect(london).toMatchObject({ status: 200, body: { account: { name: 'Ana', timeZone: 'Europe/London' } } });
     const { token } = london.body as { token: string };
-    await post(db, '/api/sync', { pushedEntries: [makeEntry(Date.parse('2026-10-08T23:30:00Z'), 6)], sinceCursor: 0 }, token);
+    await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(Date.parse('2026-10-08T23:30:00Z'), 6)], sinceCursor: 0 }, token);
     const londonId = (london.body as { account: { id: string } }).account.id;
     expect(await db.getDayTotal(londonId, '2026-10-09')).toMatchObject({ reps: 6 });
 
@@ -238,18 +278,18 @@ describe('route', () => {
     expect(joined).toMatchObject({ status: 200, body: { account: { name: 'Sam' } } });
     const { token, account } = joined.body as { token: string; account: { id: string } };
     expect(account.id).not.toMatch(/^u[12]$/);
-    expect(await post(db, '/api/sync', { pushedEntries: [], sinceCursor: 0 }, token)).toMatchObject({ status: 200, body: { account } });
+    expect(await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 }, token)).toMatchObject({ status: 200, body: { account } });
     expect((await post(db, '/api/join', { code, name: 'Sam again' })).status).toBe(410);
   });
 
   it('a device link signs into the same account and expires', async () => {
     const db = setup();
     const startMs = Date.now();
-    await post(db, '/api/sync', { pushedEntries: [makeEntry(OCT8, 4)], sinceCursor: 0 }, USER_ONE_TOKEN);
+    await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [makeEntry(OCT8, 4)], sinceCursor: 0 }, USER_ONE_TOKEN);
     const link = (await createInvite(db, 'u1', 'device', { now: () => startMs })).code;
     const joined = await post(db, '/api/join', { code: link }, undefined, () => startMs + 1000);
     const { token } = joined.body as { token: string };
-    const synced = await post(db, '/api/sync', { pushedEntries: [], sinceCursor: 0 }, token);
+    const synced = await post(db, '/api/sync', { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 }, token);
     expect(synced).toMatchObject({ status: 200, body: { account: { id: 'u1' } } });
     expect((synced.body as { entries: unknown[] }).entries).toHaveLength(1);
 

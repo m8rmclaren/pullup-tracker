@@ -70,6 +70,18 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     expect(await db.getDayTotal('c1', '2026-10-08')).toEqual({ day: '2026-10-08', reps: 9, sets: 2, bestSetReps: 6, version: 2 });
   });
 
+  it('round-trips every v2 entry field, and leaves a v1 entry without them', async () => {
+    const chinUp = { ...makeEntry(OCT8, 5, { exerciseId: 'chin-up', variationIds: ['band', 'negative'], addedWeightLbs: 10 }), serverWrittenAt: 20 };
+    const lever = { id: 'lever-d', doneAt: OCT8, updatedAt: 1, exerciseId: 'x-k3p7abcdefgh2345', variationIds: ['v-6qzrabcdefgh2345'], holdSeconds: 95, serverWrittenAt: 21 };
+    const v1 = { ...makeEntry(OCT8, 7), serverWrittenAt: 22 };
+    await Promise.all([chinUp, lever, v1].map((entry) => db.putEntry('v2', entry, null)));
+    const stored = await db.getEntries('v2', [chinUp.id, lever.id, v1.id]);
+    expect(stored.get(chinUp.id)).toEqual(chinUp);
+    expect(stored.get(lever.id)).toEqual(lever);
+    expect(stored.get(v1.id)).toEqual(v1);
+    expect(await db.entriesWrittenAfter('v2', 0)).toEqual([chinUp, lever, v1]);
+  });
+
   it('queries by write time and by set time, per user, across pages', async () => {
     const entries = Array.from({ length: 150 }, (_, i) => ({ ...makeEntry(OCT8 + i, 5, { addedWeightLbs: 2.5 }), serverWrittenAt: 1000 + i }));
     await Promise.all(entries.map((entry) => db.putEntry('q1', entry, null)));

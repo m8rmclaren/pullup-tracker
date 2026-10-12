@@ -169,10 +169,13 @@ input:focus-visible {
   background: var(--warn);
 }
 .sync-pill--auth .dot,
-.sync-line--auth .dot {
+.sync-line--auth .dot,
+.sync-pill--outdated .dot,
+.sync-line--outdated .dot {
   background: var(--danger);
 }
 .sync-pill--auth,
+.sync-pill--outdated,
 .sync-pill--unconfigured {
   color: var(--text);
   border-color: var(--accent);
@@ -334,16 +337,24 @@ input:focus-visible {
 }
 
 .set-chip__lbs,
-.set-row__lbs {
+.set-row__lbs,
+.set-chip__exercise,
+.set-row__exercise {
   font-style: normal;
   font-weight: 650;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
-.set-row__lbs {
+.set-row__lbs,
+.set-row__exercise {
   margin-left: 6px;
   font-size: 14px;
+}
+
+.set-chip__exercise,
+.set-row__exercise {
+  color: var(--muted);
 }
 
 .empty {

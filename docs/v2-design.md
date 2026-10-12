@@ -34,14 +34,22 @@ formats, the API, auth and the social graph. What the product does with them is 
 
 | Field | Rule |
 |---|---|
-| `exerciseId` | Built-in slug (`^[a-z0-9-]{1,40}$`) or a created id (`x-` + 16 base32 chars). Absent means `pull-up`. Normalization drops it when it equals `pull-up`. |
-| `variationIds` | Built-in slugs or created ids (`v-` + 16 base32 chars), at most 6, unique, stored **sorted**. Absent or empty means none. |
+| `exerciseId` | Built-in slug (`^[a-z0-9-]{1,40}$`, present in the bundled catalog) or a created id (`x-` + 16 lowercase base32 chars, `a-z2-7`). Absent means `pull-up`. Normalization drops it when it equals `pull-up`. |
+| `variationIds` | Built-in slugs (in the catalog) or created ids (`v-` + 16 lowercase base32 chars), at most 6, unique, stored **sorted**. Absent or empty means none. |
 | `reps` | Integer 1–100000, the count **in the exercise's unit** (reps, steps, laps). The name stays `reps` because it is a deployed data format. |
 | `holdSeconds` | Integer 1–86400. Exactly one of `reps` and `holdSeconds` is present, and it must match the exercise's measure. |
 | `addedWeightLbs` | Unchanged. Allowed on holds too. |
 
 The bounds are wide because exercises are open: a stair session can be thousands of steps,
 and a ruck can be hours. Validation rejects nonsense types, not unusual numbers.
+
+Validation (pinned by `validation.json`) also checks what the bundled catalog can decide: a
+built-in `exerciseId` must be in the catalog and its measure must match (`reps` for
+`count`, `holdSeconds` for `time`), and built-in variations are at most one per group. No
+built-in slug starts with `x-` or `v-`, so an id's prefix alone says whether it is
+created. A created exercise's measure needs its definition, so only the server checks it.
+An unknown built-in id is rejected rather than stored, so **a new built-in ships to the
+server before any client that logs it**.
 
 Sorting `variationIds` matters. `["tuck","negative"]` and `["negative","tuck"]` must be the
 same version, or `sameVersion` sees a change that isn't one.
@@ -293,7 +301,9 @@ definitions are point gets.
 Every change is additive except the protocol gate.
 
 **Protocol gate.** `/api/sync` requires `protocolVersion: 2` in the body. Without it the
-server returns 426 *Update the app*. A v1 client's `normalizeEntry` strips fields it
+server returns 426 *Update the app* with `{ protocolVersion }`, the version it speaks. The
+gate runs before authentication, so a stale client writes nothing. A v2 client that meets a
+426 (from a future v3 server) stops syncing until it reloads, and offers *Update now*. A v1 client's `normalizeEntry` strips fields it
 doesn't know, so if it edited a chin-up, its edit would win under last-writer-wins and turn
 the chin-up back into a pull-up. With the gate, a stale PWA sees 426 once, and the service
 worker loads the new code on its next launch.

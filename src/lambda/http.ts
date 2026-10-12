@@ -1,4 +1,4 @@
-import { type Entry, type InviteRequest, MAX_PUSHED_ENTRIES, isValidEntry } from '../shared/model';
+import { type Entry, type InviteRequest, MAX_PUSHED_ENTRIES, PROTOCOL_VERSION, isValidEntry } from '../shared/model';
 import { DEFAULT_TIME_ZONE } from '../shared/time';
 import { createInvite, redeemInvite } from './accounts';
 import { hashToken, isPlausibleSecret } from './auth';
@@ -29,6 +29,7 @@ const errorResponse = (status: number, error: string): HttpResponse => ({ status
 export async function route(request: HttpRequest, deps: RouteDeps): Promise<HttpResponse> {
   const handlers: Record<string, (body: Record<string, unknown>) => Promise<HttpResponse>> = {
     '/api/sync': async (body) => {
+      if (body.protocolVersion !== PROTOCOL_VERSION) return { status: 426, body: { error: 'Update the app to keep syncing.', protocolVersion: PROTOCOL_VERSION } };
       const userId = await authenticate(request, deps);
       if (!userId) return errorResponse(401, 'This device is signed out.');
       return sync(userId, body, deps);

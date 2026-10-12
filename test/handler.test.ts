@@ -32,20 +32,20 @@ describe('lambda handler', () => {
   it('decodes base64 bodies, authenticates, and caches the token lookup', async () => {
     const lookups = vi.spyOn(memoryDb, 'userIdForToken');
     const pushedEntries = [{ id: 'a1', doneAt: Date.parse('2026-10-08T18:00:00Z'), reps: 6, updatedAt: 1 }];
-    const response = await handler(event(JSON.stringify({ pushedEntries, sinceCursor: 0 }), TOKEN, true));
+    const response = await handler(event(JSON.stringify({ protocolVersion: 2, pushedEntries, sinceCursor: 0 }), TOKEN, true));
     expect(response.statusCode).toBe(200);
     expect(response.headers['cache-control']).toBe('no-store');
     expect(JSON.parse(response.body).entries).toEqual(pushedEntries);
 
-    expect((await handler(event('{"pushedEntries":[],"sinceCursor":0}'))).statusCode).toBe(200);
+    expect((await handler(event('{"protocolVersion":2,"pushedEntries":[],"sinceCursor":0}'))).statusCode).toBe(200);
     expect(lookups).toHaveBeenCalledTimes(1);
-    expect((await handler(event('{"pushedEntries":[],"sinceCursor":0}', 'wrong-token-but-long-enough'))).statusCode).toBe(401);
+    expect((await handler(event('{"protocolVersion":2,"pushedEntries":[],"sinceCursor":0}', 'wrong-token-but-long-enough'))).statusCode).toBe(401);
   });
 
   it('answers 500 without leaking the error', async () => {
     vi.spyOn(memoryDb, 'getUser').mockRejectedValueOnce(new Error('boom: internal detail'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const response = await handler(event('{"pushedEntries":[],"sinceCursor":0}'));
+    const response = await handler(event('{"protocolVersion":2,"pushedEntries":[],"sinceCursor":0}'));
     expect(response).toMatchObject({ statusCode: 500, body: '{"error":"internal"}' });
   });
 });

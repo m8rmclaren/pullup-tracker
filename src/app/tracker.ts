@@ -1,4 +1,4 @@
-import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_REPS, clampAddedWeight, mergeInto } from '../shared/model';
+import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
 import { DEFAULT_TIME_ZONE } from '../shared/time';
 
 export interface Settings {
@@ -10,7 +10,8 @@ export interface Settings {
   padAddedWeightDay: string;
 }
 
-export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'auth' | 'unconfigured';
+/** `outdated`: the server no longer speaks this client's protocol; nothing syncs until the app reloads into a newer version. */
+export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'auth' | 'outdated' | 'unconfigured';
 
 export class HttpError extends Error {
   constructor(
@@ -127,22 +128,27 @@ export class Tracker {
     return entry;
   }
 
-  /** `addedWeightLbs: 0` clears the added weight. */
-  update(id: string, patch: { reps?: number; doneAt?: number; addedWeightLbs?: number; deleted?: boolean }): Entry | undefined {
+  /**
+   * Edits an entry, keeping every field the patch doesn't name, including ones this UI can't
+   * show (exercise, variations). `reps` applies only to a counted set and `holdSeconds` only to
+   * a hold. `addedWeightLbs: 0` clears the added weight.
+   */
+  update(id: string, patch: { reps?: number; holdSeconds?: number; doneAt?: number; addedWeightLbs?: number; deleted?: boolean }): Entry | undefined {
     const current = this.entries.get(id);
     if (!current) return undefined;
     const next: Entry = {
-      id,
+      ...current,
       doneAt: patch.doneAt ?? current.doneAt,
-      reps: clampReps(patch.reps ?? current.reps),
       // Strictly increase the clock so this edit beats the version it replaces even if the device clock went backwards.
       updatedAt: Math.max(this.now(), current.updatedAt + 1),
+      addedWeightLbs: clampAddedWeight(patch.addedWeightLbs ?? current.addedWeightLbs ?? 0),
+      deleted: patch.deleted ?? current.deleted,
     };
-    const addedWeightLbs = clampAddedWeight(patch.addedWeightLbs ?? current.addedWeightLbs ?? 0);
-    if (addedWeightLbs) next.addedWeightLbs = addedWeightLbs;
-    if (patch.deleted ?? current.deleted) next.deleted = true;
-    this.write(next);
-    return next;
+    if (current.reps !== undefined && patch.reps !== undefined) next.reps = clampReps(patch.reps);
+    if (current.holdSeconds !== undefined && patch.holdSeconds !== undefined) next.holdSeconds = clampHoldSeconds(patch.holdSeconds);
+    const normalized = normalizeEntry(next);
+    this.write(normalized);
+    return normalized;
   }
 
   /** The pad's added weight for `day`; a choice made on an earlier day has expired. */
@@ -219,6 +225,7 @@ export class Tracker {
   }
 
   private async runSync(): Promise<void> {
+    if (this.status === 'outdated') return;
     if (!this.settings.token) {
       this.setStatus('unconfigured');
       return;
@@ -228,7 +235,7 @@ export class Tracker {
     this.setStatus('syncing');
     try {
       const token = this.settings.token;
-      const response = await this.deps.transport({ pushedEntries: pushedIds.map((id) => this.entries.get(id)!), sinceCursor: this.cursor }, token);
+      const response = await this.deps.transport({ protocolVersion: PROTOCOL_VERSION, pushedEntries: pushedIds.map((id) => this.entries.get(id)!), sinceCursor: this.cursor }, token);
       mergeInto(this.entries, response.entries);
       // The token changed mid-request: this cursor belongs to the old account.
       if (this.settings.token === token) {
@@ -248,6 +255,11 @@ export class Tracker {
       if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
         this.lastError = error.status === 401 ? 'This device was signed out. Open a new device link to sign back in.' : 'Forbidden by CloudFront — check the deploy.';
         this.setStatus('auth');
+        return;
+      }
+      if (error instanceof HttpError && error.status === 426) {
+        this.lastError = 'This version of the app is too old to sync. Reload to update; nothing logged here is lost.';
+        this.setStatus('outdated');
         return;
       }
       this.consecutiveFailures++;
@@ -316,4 +328,8 @@ export function backoffMs(consecutiveFailures: number): number {
 
 function clampReps(reps: number): number {
   return Math.min(MAX_REPS, Math.max(MIN_REPS, Math.round(reps)));
+}
+
+function clampHoldSeconds(holdSeconds: number): number {
+  return Math.min(MAX_HOLD_SECONDS, Math.max(MIN_HOLD_SECONDS, Math.round(holdSeconds)));
 }
