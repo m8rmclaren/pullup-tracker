@@ -82,8 +82,8 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
 
   it('syncs concurrently without losing sets, and day totals land in the month index', async () => {
     const pushes = Array.from({ length: 10 }, (_, i) => [makeEntry(OCT8 + i * 1000, i + 1)]);
-    await Promise.all(pushes.map((pushedEntries) => syncEntries(db, 's1', pushedEntries, 0)));
-    expect((await syncEntries(db, 's1', [], 0)).entries).toHaveLength(10);
+    await Promise.all(pushes.map((pushedEntries) => syncEntries(db, 's1', 'America/Denver', pushedEntries, 0)));
+    expect((await syncEntries(db, 's1', 'America/Denver', [], 0)).entries).toHaveLength(10);
     expect(await db.getDayTotal('s1', '2026-10-08')).toMatchObject({ reps: 55, sets: 10, bestSetReps: 10 });
 
     const board = await documentClient.send(new QueryCommand({ TableName: tableName, IndexName: 'by-month', KeyConditionExpression: 'monthPk = :monthPk', ExpressionAttributeValues: { ':monthPk': 'M#2026-10' } }));
@@ -92,19 +92,19 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
 
   it('stores the v1 golden history with the same day totals it did in v1', async () => {
     const golden = loadFixture<{ cases: StatsFixtureCase[] }>('stats.json').cases.find((fixtureCase) => fixtureCase.dayTotals)!;
-    await syncEntries(db, 'golden', toEntries(golden.entries), 0);
+    await syncEntries(db, 'golden', 'America/Denver', toEntries(golden.entries), 0);
     for (const [day, expected] of Object.entries(golden.dayTotals!)) expect(await db.getDayTotal('golden', day)).toMatchObject({ day, ...expected });
   });
 
   it('redeems an invite exactly once, even when raced', async () => {
     const code = 'real-invite-code-0123456789';
     await db.putInvite(hashToken(code), { kind: 'friend', createdBy: 'admin', expiresAt: Date.now() + 60_000 });
-    const raced = await Promise.all([1, 2, 3].map((i) => redeemInvite(db, code, `Racer ${i}`, { now: Date.now })));
+    const raced = await Promise.all([1, 2, 3].map((i) => redeemInvite(db, code, `Racer ${i}`, 'Europe/London', { now: Date.now })));
     const winners = raced.flatMap((result) => (result.ok ? [result] : []));
     expect(winners).toHaveLength(1);
     const winner = winners[0]!;
     expect(await db.userIdForToken(hashToken(winner.token))).toBe(winner.account.id);
-    expect(await db.getUser(winner.account.id)).toMatchObject({ name: winner.account.name });
+    expect(await db.getUser(winner.account.id)).toMatchObject({ name: winner.account.name, timeZone: 'Europe/London' });
     expect(await db.getInvite(hashToken(code))).toBeNull();
   });
 });

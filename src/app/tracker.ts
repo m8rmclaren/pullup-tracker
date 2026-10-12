@@ -1,11 +1,12 @@
 import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_REPS, clampAddedWeight, mergeInto } from '../shared/model';
+import { DEFAULT_TIME_ZONE } from '../shared/time';
 
 export interface Settings {
   token: string;
   goal: number;
   /** Added weight the quick pad logs with; 0 is bodyweight. */
   padAddedWeightLbs: number;
-  /** The Denver day padAddedWeightLbs was chosen. It resets to bodyweight the next day, so a forgotten belt doesn't weight tomorrow's sets. */
+  /** The day padAddedWeightLbs was chosen. It resets to bodyweight the next day, so a forgotten belt doesn't weight tomorrow's sets. */
   padAddedWeightDay: string;
 }
 
@@ -32,6 +33,8 @@ export interface TrackerDeps {
   transport: Transport;
   now?: () => number;
   newId?: () => string;
+  /** The device's IANA zone, used for days until the device joins an account. */
+  deviceTimeZone?: string;
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
@@ -78,12 +81,14 @@ export class Tracker {
 
   private readonly now: () => number;
   private readonly newId: () => string;
+  readonly deviceTimeZone: string;
   private readonly setTimer: (callback: () => void, delayMs: number) => unknown;
   private readonly clearTimer: (handle: unknown) => void;
 
   constructor(private deps: TrackerDeps) {
     this.now = deps.now ?? Date.now;
     this.newId = deps.newId ?? (() => crypto.randomUUID().replace(/-/g, ''));
+    this.deviceTimeZone = deps.deviceTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.setTimer = deps.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = deps.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     this.load();
@@ -103,6 +108,12 @@ export class Tracker {
 
   getEntry(id: string): Entry | undefined {
     return this.entries.get(id);
+  }
+
+  /** The zone days are kept in: the account's, or this device's before it joins one. */
+  timeZone(): string {
+    if (this.account) return this.account.timeZone ?? DEFAULT_TIME_ZONE;
+    return this.deviceTimeZone;
   }
 
   pendingCount(): number {

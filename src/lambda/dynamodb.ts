@@ -3,7 +3,7 @@ import { BatchGetCommand, type BatchGetCommandOutput, type DynamoDBDocumentClien
 import { type Db, type StoredDayTotal, type Invite, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
-//   U#<userId>  P           profile: id, name, createdAt
+//   U#<userId>  P           profile: id, name, createdAt, timeZone? (absent means America/Denver)
 //   U#<userId>  E#<id>      entry: Entry fields + serverWrittenAt   (LSIs `by-server-written-at` and `by-done-at` index these)
 //   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, version, userId; monthPk/monthSk feed GSI `by-month`
 //   T#<hash>    T           device token: userId, createdAt
@@ -107,7 +107,10 @@ export class DynamoDb implements Db {
 
   async getUser(userId: string) {
     const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'P' }, ConsistentRead: true }));
-    return response.Item ? { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number } : null;
+    if (!response.Item) return null;
+    const user: User = { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number };
+    if (response.Item.timeZone) user.timeZone = response.Item.timeZone as string;
+    return user;
   }
 
   async userIdForToken(tokenHash: string) {

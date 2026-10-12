@@ -371,6 +371,49 @@
    ]
   },
   {
+   "name": "a London user's late-evening set counts toward the London day",
+   "timeZone": "Europe/London",
+   "goalReps": 35,
+   "entries": [
+    {
+     "id": "l1",
+     "doneAt": "2026-10-08T23:30:00+01:00",
+     "reps": 5,
+     "updatedAt": 1
+    },
+    {
+     "id": "l2",
+     "doneAt": "2026-10-09T00:30:00+01:00",
+     "reps": 6,
+     "updatedAt": 1
+    }
+   ],
+   "checks": [
+    {
+     "now": "2026-10-09T12:00:00+01:00",
+     "dayTotals": {
+      "2026-10-08": {
+       "reps": 5,
+       "sets": 1
+      },
+      "2026-10-09": {
+       "reps": 6,
+       "sets": 1
+      }
+     },
+     "stats": {
+      "today": {
+       "day": "2026-10-09",
+       "reps": 6,
+       "sets": 1
+      },
+      "streak": 2,
+      "firstDay": "2026-10-08"
+     }
+    }
+   ]
+  },
+  {
    "name": "v1 golden history",
    "timeZone": "America/Denver",
    "goalReps": 35,

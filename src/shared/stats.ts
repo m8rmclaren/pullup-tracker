@@ -13,11 +13,11 @@ export function liveEntries(entries: Iterable<Entry>): Entry[] {
   return undeleted;
 }
 
-export function dailyTotals(entries: Iterable<Entry>): Map<string, DayTotal> {
+export function dailyTotals(entries: Iterable<Entry>, timeZone: string): Map<string, DayTotal> {
   const totals = new Map<string, DayTotal>();
   for (const entry of entries) {
     if (entry.deleted) continue;
-    const day = dayKey(entry.doneAt);
+    const day = dayKey(entry.doneAt, timeZone);
     const dayTotal = totals.get(day) ?? { day, reps: 0, sets: 0 };
     dayTotal.reps += entry.reps;
     dayTotal.sets += 1;
@@ -68,9 +68,9 @@ export interface Stats {
   firstDay: string | null;
 }
 
-export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number): Stats {
-  const totals = dailyTotals(entries);
-  const todayKey = dayKey(nowMs);
+export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number, timeZone: string): Stats {
+  const totals = dailyTotals(entries, timeZone);
+  const todayKey = dayKey(nowMs, timeZone);
   const today = totals.get(todayKey) ?? { day: todayKey, reps: 0, sets: 0 };
 
   let firstDay: string | null = null;
@@ -144,11 +144,11 @@ export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: 
 }
 
 /** The rep count logged most often in the last 30 days, for highlighting the usual button. */
-export function usualReps(entries: Iterable<Entry>, nowMs: number): number | null {
-  const cutoff = addDays(dayKey(nowMs), -29);
+export function usualReps(entries: Iterable<Entry>, nowMs: number, timeZone: string): number | null {
+  const cutoff = addDays(dayKey(nowMs, timeZone), -29);
   const setCountsByReps = new Map<number, number>();
   for (const entry of entries) {
-    if (entry.deleted || dayKey(entry.doneAt) < cutoff) continue;
+    if (entry.deleted || dayKey(entry.doneAt, timeZone) < cutoff) continue;
     setCountsByReps.set(entry.reps, (setCountsByReps.get(entry.reps) ?? 0) + 1);
   }
   let mostCommonReps: number | null = null;
@@ -169,12 +169,12 @@ export interface HeaviestSet {
 }
 
 /** Most added weight in one set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
-export function heaviestSet(entries: Iterable<Entry>, nowMs: number): HeaviestSet | null {
-  const todayKey = dayKey(nowMs);
+export function heaviestSet(entries: Iterable<Entry>, nowMs: number, timeZone: string): HeaviestSet | null {
+  const todayKey = dayKey(nowMs, timeZone);
   let heaviest: HeaviestSet | null = null;
   for (const entry of entries) {
     if (entry.deleted || !entry.addedWeightLbs) continue;
-    const day = dayKey(entry.doneAt);
+    const day = dayKey(entry.doneAt, timeZone);
     if (day > todayKey) continue;
     if (!heaviest || entry.addedWeightLbs > heaviest.addedWeightLbs || (entry.addedWeightLbs === heaviest.addedWeightLbs && (entry.reps > heaviest.reps || (entry.reps === heaviest.reps && day > heaviest.day)))) {
       heaviest = { addedWeightLbs: entry.addedWeightLbs, reps: entry.reps, day };

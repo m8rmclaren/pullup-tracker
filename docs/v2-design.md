@@ -145,6 +145,11 @@ on it.
 
 - The profile gains `timeZone` (IANA name). It is set from the device at sign-up, editable
   in Settings, and existing users default to `America/Denver`, so their day keys don't move.
+  The default is applied at read time: a profile with no `timeZone` means Denver, so no
+  backfill. Until passkey sign-up replaces it, `/api/join` takes the device's `timeZone`
+  for a new account (absent means Denver, for clients that predate zones).
+- A client that hasn't joined an account keeps days in the device's own zone. Once
+  signed in, it uses the account's zone, from the sync response.
 - `time.ts` takes the zone as a parameter instead of a constant. Day-key arithmetic stays
   pure calendar math.
 - Changing your zone recomputes your day totals for the last 62 days. Older days keep
