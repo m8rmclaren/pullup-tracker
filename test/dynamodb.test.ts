@@ -11,6 +11,7 @@ import { PreconditionFailed } from '../src/lambda/db';
 import { DynamoDb } from '../src/lambda/dynamodb';
 import { syncEntries } from '../src/lambda/sync';
 import type { Entry } from '../src/shared/model';
+import { type StatsFixtureCase, loadFixture, toEntries } from './fixtures';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT;
 const tableName = `pullups-test-${Date.now()}`;
@@ -87,6 +88,12 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
 
     const board = await documentClient.send(new QueryCommand({ TableName: tableName, IndexName: 'by-month', KeyConditionExpression: 'monthPk = :monthPk', ExpressionAttributeValues: { ':monthPk': 'M#2026-10' } }));
     expect(board.Items?.find((item) => item.userId === 's1')).toMatchObject({ day: '2026-10-08', reps: 55 });
+  });
+
+  it('stores the v1 golden history with the same day totals it did in v1', async () => {
+    const golden = loadFixture<{ cases: StatsFixtureCase[] }>('stats.json').cases.find((fixtureCase) => fixtureCase.dayTotals)!;
+    await syncEntries(db, 'golden', toEntries(golden.entries), 0);
+    for (const [day, expected] of Object.entries(golden.dayTotals!)) expect(await db.getDayTotal('golden', day)).toMatchObject({ day, ...expected });
   });
 
   it('redeems an invite exactly once, even when raced', async () => {

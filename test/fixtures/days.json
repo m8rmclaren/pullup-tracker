@@ -1,0 +1,52 @@
+{
+  "dayKeys": [
+    { "name": "rolls over at Denver midnight in summer (MDT, UTC-6)", "at": "2026-10-08T05:59:59Z", "timeZone": "America/Denver", "day": "2026-10-07" },
+    { "name": "rolls over at Denver midnight in summer (MDT, UTC-6)", "at": "2026-10-08T06:00:00Z", "timeZone": "America/Denver", "day": "2026-10-08" },
+    { "name": "rolls over at 07:00Z in winter (MST, UTC-7)", "at": "2026-01-15T06:59:59Z", "timeZone": "America/Denver", "day": "2026-01-14" },
+    { "name": "rolls over at 07:00Z in winter (MST, UTC-7)", "at": "2026-01-15T07:00:00Z", "timeZone": "America/Denver", "day": "2026-01-15" },
+    { "name": "an evening session crossing UTC midnight stays on one day (5pm)", "at": "2026-10-07T23:00:00Z", "timeZone": "America/Denver", "day": "2026-10-07" },
+    { "name": "an evening session crossing UTC midnight stays on one day (7pm)", "at": "2026-10-08T01:00:00Z", "timeZone": "America/Denver", "day": "2026-10-07" },
+    { "name": "the last minute of a month stays in that month", "at": "2026-11-01T05:59:00Z", "timeZone": "America/Denver", "day": "2026-10-31" },
+    { "name": "the first minute of a month", "at": "2026-11-01T06:00:00Z", "timeZone": "America/Denver", "day": "2026-11-01" },
+    { "name": "the last minute of a year", "at": "2027-01-01T06:59:00Z", "timeZone": "America/Denver", "day": "2026-12-31" },
+    { "name": "the first minute of a year", "at": "2027-01-01T07:00:00Z", "timeZone": "America/Denver", "day": "2027-01-01" },
+    { "name": "11:30pm on the night clocks fall back", "at": "2026-11-01T05:30:00Z", "timeZone": "America/Denver", "day": "2026-10-31" },
+    { "name": "1:30am in the repeated fall-back hour (first occurrence)", "at": "2026-11-01T07:30:00Z", "timeZone": "America/Denver", "day": "2026-11-01" },
+    { "name": "1:30am in the repeated fall-back hour (second occurrence)", "at": "2026-11-01T08:30:00Z", "timeZone": "America/Denver", "day": "2026-11-01" }
+  ],
+  "wallClockToInstant": [
+    { "name": "midnight in summer", "day": "2026-10-08", "time": "00:00", "timeZone": "America/Denver", "at": "2026-10-08T06:00:00Z" },
+    { "name": "the last minute of a winter day", "day": "2026-01-15", "time": "23:59", "timeZone": "America/Denver", "at": "2026-01-16T06:59:00Z" },
+    { "name": "an ordinary afternoon", "day": "2026-07-04", "time": "13:37", "timeZone": "America/Denver", "at": "2026-07-04T19:37:00Z" },
+    { "name": "a time skipped by spring-forward moves an hour later", "day": "2026-03-08", "time": "02:30", "timeZone": "America/Denver", "at": "2026-03-08T09:30:00Z" },
+    { "name": "the repeated fall-back hour resolves to its first occurrence", "day": "2026-11-01", "time": "01:30", "timeZone": "America/Denver", "at": "2026-11-01T07:30:00Z" }
+  ],
+  "timeOfDay": [
+    { "name": "an ordinary afternoon", "at": "2026-07-04T19:37:00Z", "timeZone": "America/Denver", "time": "13:37" },
+    { "name": "just after midnight", "at": "2026-10-08T06:05:00Z", "timeZone": "America/Denver", "time": "00:05" },
+    { "name": "spring-forward lands on 03:30", "at": "2026-03-08T09:30:00Z", "timeZone": "America/Denver", "time": "03:30" }
+  ],
+  "msUntilNextDay": [
+    { "name": "spring-forward day is 23 hours", "at": "2026-03-08T07:00:00Z", "timeZone": "America/Denver", "ms": 82800000 },
+    { "name": "fall-back day is 25 hours", "at": "2026-11-01T06:00:00Z", "timeZone": "America/Denver", "ms": 90000000 }
+  ],
+  "addDays": [
+    { "day": "2026-03-07", "days": 1, "result": "2026-03-08" },
+    { "day": "2026-03-08", "days": 1, "result": "2026-03-09" },
+    { "day": "2026-11-01", "days": 1, "result": "2026-11-02" },
+    { "day": "2028-02-28", "days": 1, "result": "2028-02-29" },
+    { "day": "2026-12-31", "days": 1, "result": "2027-01-01" },
+    { "day": "2026-03-01", "days": -1, "result": "2026-02-28" },
+    { "day": "2026-10-08", "days": -29, "result": "2026-09-09" }
+  ],
+  "daysBetween": [
+    { "fromDay": "2026-02-28", "toDay": "2026-03-31", "days": 31 },
+    { "fromDay": "2026-10-08", "toDay": "2026-10-01", "days": -7 },
+    { "fromDay": "2026-10-31", "toDay": "2026-11-02", "days": 2 }
+  ],
+  "startOfWeek": [
+    { "name": "Thursday to Monday", "day": "2026-10-08", "result": "2026-10-05" },
+    { "name": "Sunday to Monday", "day": "2026-10-11", "result": "2026-10-05" },
+    { "name": "Monday is its own start", "day": "2026-10-05", "result": "2026-10-05" }
+  ]
+}
