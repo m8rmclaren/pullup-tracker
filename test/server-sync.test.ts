@@ -148,7 +148,29 @@ describe('day totals and the ring', () => {
       { id: 'hold1', doneAt: OCT8, updatedAt: 1, exerciseId: 'plank', holdSeconds: 600 },
       makeEntry(OCT8, 50, { exerciseId: 'x-k3p7abcdefgh2345' }),
     ], 0);
-    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toMatchObject({ reps: 28, sets: 4, bestSetReps: 20 });
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toEqual({
+      day: '2026-10-08',
+      reps: 28,
+      sets: 4,
+      bestSetReps: 20,
+      holdSeconds: 600,
+      byExercise: {
+        'pull-up': { sets: 1, reps: 8, bestSetReps: 8 },
+        'push-up': { sets: 1, reps: 20, bestSetReps: 20 },
+        plank: { sets: 1, holdSeconds: 600, bestHoldSeconds: 600 },
+        'x-k3p7abcdefgh2345': { sets: 1, reps: 50, bestSetReps: 50 },
+      },
+      version: 1,
+    });
+  });
+
+  it('rewrites a pre-v2 total in the v2 shape on the next change to that day', async () => {
+    const db = new MemoryDb();
+    const first = makeEntry(OCT8, 6);
+    await db.putEntry(USER_ID, { ...first, serverWrittenAt: 1 }, null);
+    await db.putDayTotal(USER_ID, { day: '2026-10-08', reps: 6, sets: 1, bestSetReps: 6, version: 3 }, null);
+    await syncEntries(db, USER_ID, DENVER, [makeEntry(OCT8, 4, { addedWeightLbs: 25 })], 0);
+    expect(await db.getDayTotal(USER_ID, '2026-10-08')).toEqual({ day: '2026-10-08', reps: 10, sets: 2, bestSetReps: 6, holdSeconds: 0, byExercise: { 'pull-up': { sets: 2, reps: 10, bestSetReps: 6, bestAddedWeightLbs: 25 } }, version: 4 });
   });
 });
 

@@ -286,7 +286,7 @@ describe('Tracker', () => {
     // The ring counts the pull-ups, muscle-ups and the created rep-unit exercise; not laps, not the hold.
     const ringReps = computeStats(otherDevice.allEntries(), clock.nowMs, 35, 'America/Denver', (exerciseId) => otherDevice.exercise(exerciseId)?.unit).today.reps;
     expect(ringReps).toBe(8 + 10 + 2);
-    expect(db.dayTotals.get(USER_ID)!.get('2026-10-08')).toMatchObject({ reps: 8 + 2, sets: 5 });
+    expect(db.dayTotals.get(USER_ID)!.get('2026-10-08')).toMatchObject({ reps: ringReps, sets: 5, holdSeconds: 90 });
   });
 
   it('renames a created exercise on one device and the other picks it up', async () => {

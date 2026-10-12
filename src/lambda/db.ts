@@ -1,17 +1,17 @@
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, parseDefinitionKeyString } from '../shared/definitions';
 import type { Entry, InviteKind } from '../shared/model';
+import type { DayTotalRecord } from '../shared/stats';
 
 /** An entry as stored: `serverWrittenAt` is the server time it was written, the delta-sync cursor. */
 export interface StoredEntry extends Entry {
   serverWrittenAt: number;
 }
 
-/** One user's totals for one day in their zone, recomputed from entries on every change. */
-export interface StoredDayTotal {
-  day: string;
-  reps: number;
-  sets: number;
-  bestSetReps: number;
+/**
+ * One user's totals for one day in their zone, recomputed from entries on every change.
+ * `holdSeconds` and `byExercise` are absent on a total written before v2; read those with exerciseDayTotals.
+ */
+export interface StoredDayTotal extends Omit<DayTotalRecord, 'holdSeconds' | 'byExercise'>, Partial<Pick<DayTotalRecord, 'holdSeconds' | 'byExercise'>> {
   /** Bumped on every write; guards against a stale recompute overwriting a newer one. */
   version: number;
 }

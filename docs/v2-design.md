@@ -139,7 +139,7 @@ Still recomputed from entries on every change, and now keyed by the user's **loc
 {
   "day": "2026-10-08", "reps": 61, "sets": 14, "bestSetReps": 12, "holdSeconds": 95,
   "byExercise": {
-    "pull-up": { "reps": 31, "sets": 6, "bestSetReps": 8 },
+    "pull-up": { "reps": 31, "sets": 6, "bestSetReps": 8, "bestAddedWeightLbs": 25 },
     "push-up": { "reps": 30, "sets": 3, "bestSetReps": 12 },
     "x-k3p9…": { "reps": 3, "sets": 3, "bestSetReps": 1 },
     "plank": { "sets": 2, "holdSeconds": 95, "bestHoldSeconds": 60 }
@@ -149,14 +149,27 @@ Still recomputed from entries on every change, and now keyed by the user's **loc
 ```
 
 - The top-level `reps` keeps its meaning of "the number on the ring": counted sets whose
-  unit is `rep`. A created exercise counted in reps (say "archer typewriters") counts. Red
+  unit is `rep`. `bestSetReps` follows the same rule. `sets` counts every set, and
+  `holdSeconds` sums every hold. A created exercise counted in reps (say "archer typewriters") counts. Red
   Rocks laps don't, because a thousand steps would swamp sixty pull-ups.
 - `byExercise[id].reps` is in that exercise's own unit. It feeds the per-exercise boards and
-  profile totals.
+  profile totals. A counted exercise has `sets`, `reps`, `bestSetReps`; a timed one has
+  `sets`, `holdSeconds`, `bestHoldSeconds`. Either has `bestAddedWeightLbs` when any set
+  that day carried weight, the one candidate field added for a future "heaviest set" board.
+- The board metrics read: `count` → `reps` or `holdSeconds`; `sets` → `sets`; `bestSet` →
+  `bestSetReps` or `bestHoldSeconds`; `activeDays` → `sets > 0`; `goalPercent` → the
+  top-level `reps` against the profile's goal. Each is per exercise in `byExercise`, or
+  across exercises at the top level.
+- The shape is computed by `computeDayTotal` in `src/shared/stats.ts` and pinned by
+  `stats.json` (`dayTotalRecords`), so a client can recompute a day exactly as the server
+  does.
 - Recomputing needs each exercise's unit. Built-ins come from the bundled catalog, created
   ones from a batch get of the day's distinct `x-` ids.
-- A day total written before v2 has no `byExercise`, and readers treat it as entirely
-  `pull-up`. Any later edit rewrites it, so no backfill is needed.
+- A day total written before v2 has no `byExercise` or `holdSeconds`, and readers treat it
+  as entirely `pull-up` (`exerciseDayTotals`, pinned by `stats.json`'s `legacyDayTotals`).
+  The test suite checks, for every day of the v1 golden history, that this reading equals a
+  v2 recompute of the same sets. Any later edit to the day rewrites it, so no backfill is
+  needed. The one thing a v1 total can't say is its `bestAddedWeightLbs`.
 
 ### Time zones
 

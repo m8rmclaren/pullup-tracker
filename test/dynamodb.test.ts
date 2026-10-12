@@ -3,7 +3,7 @@
 //   docker run --rm -p 8000:8000 amazon/dynamodb-local
 //   DYNAMODB_ENDPOINT=http://localhost:8000 npm test
 import { CreateTableCommand, DeleteTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { redeemInvite } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
@@ -11,6 +11,7 @@ import { PreconditionFailed } from '../src/lambda/db';
 import { DynamoDb } from '../src/lambda/dynamodb';
 import { syncEntries } from '../src/lambda/sync';
 import type { Entry } from '../src/shared/model';
+import { exerciseDayTotals } from '../src/shared/stats';
 import { type StatsFixtureCase, loadFixture, toEntries } from './fixtures';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT;
@@ -132,6 +133,18 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     await Promise.all(ids.map((id) => db.createDefinition({ id, name: id, measure: 'time', createdBy: 'bx', createdAt: 1, updatedAt: 1, version: 1 }, 'bx', 1)));
     expect((await db.getDefinitions(ids.map((exerciseId) => ({ exerciseId })))).size).toBe(130);
     expect(await db.adoptedDefinitionKeys('bx')).toHaveLength(130);
+  });
+
+  it('round-trips a v2 day total, and reads a pre-v2 one without the fields it never had', async () => {
+    const byExercise = { 'pull-up': { sets: 2, reps: 13, bestSetReps: 7, bestAddedWeightLbs: 25 }, plank: { sets: 1, holdSeconds: 60, bestHoldSeconds: 60 } };
+    await db.putDayTotal('t5', { day: '2026-10-08', reps: 13, sets: 3, bestSetReps: 7, holdSeconds: 60, byExercise, version: 1 }, null);
+    expect(await db.getDayTotal('t5', '2026-10-08')).toEqual({ day: '2026-10-08', reps: 13, sets: 3, bestSetReps: 7, holdSeconds: 60, byExercise, version: 1 });
+
+    // As v1 wrote it: no holdSeconds, no byExercise.
+    await documentClient.send(new PutCommand({ TableName: tableName, Item: { pk: 'U#t5', sk: 'D#2026-10-07', userId: 't5', day: '2026-10-07', reps: 41, sets: 7, bestSetReps: 8, version: 9, monthPk: 'M#2026-10', monthSk: '2026-10-07#t5' } }));
+    const legacy = await db.getDayTotal('t5', '2026-10-07');
+    expect(legacy).toEqual({ day: '2026-10-07', reps: 41, sets: 7, bestSetReps: 8, version: 9 });
+    expect(exerciseDayTotals(legacy!)).toEqual({ 'pull-up': { sets: 7, reps: 41, bestSetReps: 8 } });
   });
 
   it('redeems an invite exactly once, even when raced', async () => {
