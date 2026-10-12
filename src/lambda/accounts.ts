@@ -1,6 +1,8 @@
 import { type Account, type InviteKind, type InviteResponse, cleanName } from '../shared/model';
+import { DEFAULT_TIME_ZONE, isValidTimeZone } from '../shared/time';
 import { hashToken, newSecret, newUserId } from './auth';
 import { type Db, PreconditionFailed } from './db';
+import { accountOf } from './profile';
 import type { Clock } from './sync';
 
 export const FRIEND_INVITE_TTL_MS = 7 * 86_400_000;
@@ -18,7 +20,7 @@ export type RedeemResult = { ok: true; token: string; account: Account } | { ok:
 
 const INVITE_GONE: RedeemResult = { ok: false, status: 410, error: 'This link has expired or was already used.' };
 
-export async function redeemInvite(db: Db, code: string, rawName: unknown, clock: Clock): Promise<RedeemResult> {
+export async function redeemInvite(db: Db, code: string, rawName: unknown, rawTimeZone: unknown, clock: Clock): Promise<RedeemResult> {
   const codeHash = hashToken(code);
   const invite = await db.getInvite(codeHash);
   // TTL deletion lags by hours or days, so expiry is checked here, not left to DynamoDB.
@@ -31,13 +33,15 @@ export async function redeemInvite(db: Db, code: string, rawName: unknown, clock
       const user = await db.getUser(invite.userId!);
       if (!user) return INVITE_GONE;
       await db.redeemInvite(codeHash, hashToken(token), user.id, null);
-      account = { id: user.id, name: user.name };
+      account = accountOf(user);
     } else {
       const name = cleanName(rawName);
       if (!name) return { ok: false, status: 400, error: 'Pick a name of 1 to 24 characters.' };
-      const user = { id: newUserId(), name, createdAt: clock.now() };
+      const timeZone = rawTimeZone === undefined ? DEFAULT_TIME_ZONE : rawTimeZone;
+      if (!isValidTimeZone(timeZone)) return { ok: false, status: 400, error: 'timeZone must be an IANA time zone name.' };
+      const user = { id: newUserId(), name, createdAt: clock.now(), timeZone };
       await db.redeemInvite(codeHash, hashToken(token), user.id, user);
-      account = { id: user.id, name };
+      account = accountOf(user);
     }
   } catch (error) {
     if (error instanceof PreconditionFailed) return INVITE_GONE;

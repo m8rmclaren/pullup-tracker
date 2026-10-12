@@ -1,24 +1,30 @@
+import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, parseDefinitionKeyString } from '../shared/definitions';
 import type { Entry, InviteKind } from '../shared/model';
+import type { ProfileFields } from '../shared/profile';
+import type { DayTotalRecord } from '../shared/stats';
 
 /** An entry as stored: `serverWrittenAt` is the server time it was written, the delta-sync cursor. */
 export interface StoredEntry extends Entry {
   serverWrittenAt: number;
 }
 
-/** One user's totals for one Denver day, recomputed from entries on every change. */
-export interface StoredDayTotal {
-  day: string;
-  reps: number;
-  sets: number;
-  bestSetReps: number;
+/**
+ * One user's totals for one day in their zone, recomputed from entries on every change.
+ * `holdSeconds` and `byExercise` are absent on a total written before v2; read those with exerciseDayTotals.
+ */
+export interface StoredDayTotal extends Omit<DayTotalRecord, 'holdSeconds' | 'byExercise'>, Partial<Pick<DayTotalRecord, 'holdSeconds' | 'byExercise'>> {
   /** Bumped on every write; guards against a stale recompute overwriting a newer one. */
   version: number;
 }
 
-export interface User {
+/** A created exercise or variation as stored: `version` is bumped on every write and guards against a lost update. */
+export type StoredDefinition = Definition & { version: number };
+
+export interface User extends ProfileFields {
   id: string;
-  name: string;
   createdAt: number;
+  /** Bumped on every profile write. Absent on a profile never edited since sign-up. */
+  version?: number;
 }
 
 export interface Invite {
@@ -54,7 +60,19 @@ export interface Db {
   /** Same precondition scheme as putEntry, on `version`. */
   putDayTotal(userId: string, dayTotal: StoredDayTotal, expectedVersion: number | null): Promise<void>;
 
+  /** Keyed by definitionKeyString; missing keys are absent. */
+  getDefinitions(keys: DefinitionKey[]): Promise<Map<string, StoredDefinition>>;
+  /** Atomically creates the definition and adopts it for `userId`. Throws PreconditionFailed if it already exists. */
+  createDefinition(definition: StoredDefinition, userId: string, adoptedAt: number): Promise<void>;
+  /** The stored `version` must still equal `expectedVersion`. */
+  putDefinition(definition: StoredDefinition, expectedVersion: number): Promise<void>;
+  /** The definitions a user has created or logged to, which every sync returns. */
+  adoptedDefinitionKeys(userId: string): Promise<DefinitionKey[]>;
+  adoptDefinition(userId: string, key: DefinitionKey, adoptedAt: number): Promise<void>;
+
   getUser(userId: string): Promise<User | null>;
+  /** Replaces an existing profile. `expectedVersion` null: the stored profile must have no version yet. */
+  putProfile(user: User, expectedVersion: number | null): Promise<void>;
   userIdForToken(tokenHash: string): Promise<string | null>;
   putInvite(codeHash: string, invite: Invite): Promise<void>;
   getInvite(codeHash: string): Promise<Invite | null>;
@@ -72,6 +90,9 @@ export class MemoryDb implements Db {
   users = new Map<string, User>();
   tokens = new Map<string, string>();
   invites = new Map<string, Invite>();
+  definitions = new Map<string, StoredDefinition>();
+  /** userId → definitionKeyString → adoptedAt */
+  adoptions = new Map<string, Map<string, number>>();
 
   private userEntries(userId: string) {
     let entriesById = this.entries.get(userId);
@@ -120,9 +141,47 @@ export class MemoryDb implements Db {
     dayTotalsByDay.set(dayTotal.day, { ...dayTotal });
   }
 
+  async getDefinitions(keys: DefinitionKey[]) {
+    const definitionsByKey = new Map<string, StoredDefinition>();
+    for (const key of keys) {
+      const definition = this.definitions.get(definitionKeyString(key));
+      if (definition) definitionsByKey.set(definitionKeyString(key), { ...definition });
+    }
+    return definitionsByKey;
+  }
+
+  async createDefinition(definition: StoredDefinition, userId: string, adoptedAt: number) {
+    const keyString = definitionKeyString(definitionKeyOf(definition));
+    if (this.definitions.has(keyString)) throw new PreconditionFailed();
+    this.definitions.set(keyString, { ...definition });
+    await this.adoptDefinition(userId, definitionKeyOf(definition), adoptedAt);
+  }
+
+  async putDefinition(definition: StoredDefinition, expectedVersion: number) {
+    const keyString = definitionKeyString(definitionKeyOf(definition));
+    if (this.definitions.get(keyString)?.version !== expectedVersion) throw new PreconditionFailed();
+    this.definitions.set(keyString, { ...definition });
+  }
+
+  async adoptedDefinitionKeys(userId: string) {
+    return [...(this.adoptions.get(userId)?.keys() ?? [])].map(parseDefinitionKeyString);
+  }
+
+  async adoptDefinition(userId: string, key: DefinitionKey, adoptedAt: number) {
+    let adoptedAtByKey = this.adoptions.get(userId);
+    if (!adoptedAtByKey) this.adoptions.set(userId, (adoptedAtByKey = new Map()));
+    adoptedAtByKey.set(definitionKeyString(key), adoptedAt);
+  }
+
   async getUser(userId: string) {
     const user = this.users.get(userId);
     return user ? { ...user } : null;
+  }
+
+  async putProfile(user: User, expectedVersion: number | null) {
+    const stored = this.users.get(user.id);
+    if (!stored || (stored.version ?? null) !== expectedVersion) throw new PreconditionFailed();
+    this.users.set(user.id, { ...user });
   }
 
   async userIdForToken(tokenHash: string) {

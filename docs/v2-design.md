@@ -34,14 +34,22 @@ formats, the API, auth and the social graph. What the product does with them is 
 
 | Field | Rule |
 |---|---|
-| `exerciseId` | Built-in slug (`^[a-z0-9-]{1,40}$`) or a created id (`x-` + 16 base32 chars). Absent means `pull-up`. Normalization drops it when it equals `pull-up`. |
-| `variationIds` | Built-in slugs or created ids (`v-` + 16 base32 chars), at most 6, unique, stored **sorted**. Absent or empty means none. |
+| `exerciseId` | Built-in slug (`^[a-z0-9-]{1,40}$`, present in the bundled catalog) or a created id (`x-` + 16 lowercase base32 chars, `a-z2-7`). Absent means `pull-up`. Normalization drops it when it equals `pull-up`. |
+| `variationIds` | Built-in slugs (in the catalog) or created ids (`v-` + 16 lowercase base32 chars), at most 6, unique, stored **sorted**. Absent or empty means none. |
 | `reps` | Integer 1–100000, the count **in the exercise's unit** (reps, steps, laps). The name stays `reps` because it is a deployed data format. |
 | `holdSeconds` | Integer 1–86400. Exactly one of `reps` and `holdSeconds` is present, and it must match the exercise's measure. |
 | `addedWeightLbs` | Unchanged. Allowed on holds too. |
 
 The bounds are wide because exercises are open: a stair session can be thousands of steps,
 and a ruck can be hours. Validation rejects nonsense types, not unusual numbers.
+
+Validation (pinned by `validation.json`) also checks what the bundled catalog can decide: a
+built-in `exerciseId` must be in the catalog and its measure must match (`reps` for
+`count`, `holdSeconds` for `time`), and built-in variations are at most one per group. No
+built-in slug starts with `x-` or `v-`, so an id's prefix alone says whether it is
+created. A created exercise's measure needs its definition, so only the server checks it.
+An unknown built-in id is rejected rather than stored, so **a new built-in ships to the
+server before any client that logs it**.
 
 Sorting `variationIds` matters. `["tuck","negative"]` and `["negative","tuck"]` must be the
 same version, or `sameVersion` sees a change that isn't one.
@@ -100,7 +108,21 @@ variation is at most one per group.
   "into tuck" on a muscle-up can sit alongside "wide grip".
 - **The server checks shape only**: name 1–60 printable characters, unit 1–20, description
   up to 280, measure one of `count` or `time`. It does not judge whether an exercise is
-  real, sensible or a duplicate.
+  real, sensible or a duplicate. Text must already be trimmed and free of control and
+  format characters (`validation.json`), so clients clean it before saving.
+- **The server stamps `createdBy`** from the account that first pushes the id; a
+  client-sent `createdBy` is ignored. A later push by anyone else, or one that changes
+  `measure`, `unit` or a variation's `exerciseId`, is **dropped and logged rather than
+  rejected**, so one bad definition can't wedge the rest of a client's outbox.
+- **A set's measure must match its created exercise** (`reps` for `count`, `holdSeconds`
+  for `time`), checked after the push's definitions are merged. A set that logs to an
+  unknown created id is accepted, so no write is ever lost to ordering.
+- **Your adopted list** is what every sync returns: one `U#<userId> A#<key>` item per
+  definition you created or have logged to (see New items). Creating a definition adopts
+  it in the same transaction; pushing a set that logs to someone else's adopts it then.
+  M1's challenge join and M2's Add to mine will write the same item. Each sync returns
+  every adopted definition, so a rename reaches every device on its next sync, at the
+  cost of one query and one batch get per sync.
 - **Duplicates are reduced, not prevented.** The picker and the composer search your
   exercises, your friends' and the built-ins before offering "new". Friends who adopt each
   other's exercises share one id. Merging two created exercises (an `aliasOf` pointer) is
@@ -117,7 +139,7 @@ Still recomputed from entries on every change, and now keyed by the user's **loc
 {
   "day": "2026-10-08", "reps": 61, "sets": 14, "bestSetReps": 12, "holdSeconds": 95,
   "byExercise": {
-    "pull-up": { "reps": 31, "sets": 6, "bestSetReps": 8 },
+    "pull-up": { "reps": 31, "sets": 6, "bestSetReps": 8, "bestAddedWeightLbs": 25 },
     "push-up": { "reps": 30, "sets": 3, "bestSetReps": 12 },
     "x-k3p9…": { "reps": 3, "sets": 3, "bestSetReps": 1 },
     "plank": { "sets": 2, "holdSeconds": 95, "bestHoldSeconds": 60 }
@@ -127,14 +149,27 @@ Still recomputed from entries on every change, and now keyed by the user's **loc
 ```
 
 - The top-level `reps` keeps its meaning of "the number on the ring": counted sets whose
-  unit is `rep`. A created exercise counted in reps (say "archer typewriters") counts. Red
+  unit is `rep`. `bestSetReps` follows the same rule. `sets` counts every set, and
+  `holdSeconds` sums every hold. A created exercise counted in reps (say "archer typewriters") counts. Red
   Rocks laps don't, because a thousand steps would swamp sixty pull-ups.
 - `byExercise[id].reps` is in that exercise's own unit. It feeds the per-exercise boards and
-  profile totals.
+  profile totals. A counted exercise has `sets`, `reps`, `bestSetReps`; a timed one has
+  `sets`, `holdSeconds`, `bestHoldSeconds`. Either has `bestAddedWeightLbs` when any set
+  that day carried weight, the one candidate field added for a future "heaviest set" board.
+- The board metrics read: `count` → `reps` or `holdSeconds`; `sets` → `sets`; `bestSet` →
+  `bestSetReps` or `bestHoldSeconds`; `activeDays` → `sets > 0`; `goalPercent` → the
+  top-level `reps` against the profile's goal. Each is per exercise in `byExercise`, or
+  across exercises at the top level.
+- The shape is computed by `computeDayTotal` in `src/shared/stats.ts` and pinned by
+  `stats.json` (`dayTotalRecords`), so a client can recompute a day exactly as the server
+  does.
 - Recomputing needs each exercise's unit. Built-ins come from the bundled catalog, created
   ones from a batch get of the day's distinct `x-` ids.
-- A day total written before v2 has no `byExercise`, and readers treat it as entirely
-  `pull-up`. Any later edit rewrites it, so no backfill is needed.
+- A day total written before v2 has no `byExercise` or `holdSeconds`, and readers treat it
+  as entirely `pull-up` (`exerciseDayTotals`, pinned by `stats.json`'s `legacyDayTotals`).
+  The test suite checks, for every day of the v1 golden history, that this reading equals a
+  v2 recompute of the same sets. Any later edit to the day rewrites it, so no backfill is
+  needed. The one thing a v1 total can't say is its `bestAddedWeightLbs`.
 
 ### Time zones
 
@@ -145,10 +180,20 @@ on it.
 
 - The profile gains `timeZone` (IANA name). It is set from the device at sign-up, editable
   in Settings, and existing users default to `America/Denver`, so their day keys don't move.
+  The default is applied at read time: a profile with no `timeZone` means Denver, so no
+  backfill. Until passkey sign-up replaces it, `/api/join` takes the device's `timeZone`
+  for a new account (absent means Denver, for clients that predate zones).
+- A client that hasn't joined an account keeps days in the device's own zone. Once
+  signed in, it uses the account's zone, from the sync response.
 - `time.ts` takes the zone as a parameter instead of a constant. Day-key arithmetic stays
   pure calendar math.
 - Changing your zone recomputes your day totals for the last 62 days. Older days keep
-  their keys. That's the cost of moving, and it's rare.
+  their keys. That's the cost of moving, and it's rare. The window reaches two days past
+  each end, since two zones' todays can be up to two dates apart (UTC+14 vs UTC−12), and a
+  day with no sets gets no total rather than an empty one. The rebuild runs whenever a
+  request's zone is the stored one afterwards, so a client retrying a change whose first
+  attempt died mid-rebuild heals it. A sync that read the old zone and is still running
+  can write one day in the old zone; the next edit to that day fixes it.
 - Leaderboards compare **each person's own** today, week and month. Two friends in
   different zones are on different "todays" for part of the day, which is what users
   expect.
@@ -156,8 +201,16 @@ on it.
 ### Profile
 
 `U#<userId> P` gains `dailyGoalReps`, `goalUpdatedAt`, `timeZone`, `zoneUpdatedAt`, and a
-`name` that is editable, merged last-writer-wins. The goal moves off the device so the
-phone, Watch, widgets and the "% of goal" ranking agree on it.
+`name` that is editable, merged last-writer-wins with its own clock, `nameUpdatedAt`. Each
+field is a separate register, so a goal set on the phone and a zone set on the laptop both
+survive (`merge.json`'s `profiles`). A field with no clock was set at sign-up, or predates
+clocks, and loses to any edit. The goal moves off the device so the phone, Watch, widgets
+and the "% of goal" ranking agree on it. Until an account's goal is first set, each device
+keeps showing its own, so nobody's ring moves on upgrade.
+
+The profile also gains a `version`, bumped on every edit, and edits are a read, a merge and
+a put conditional on it. (The API role may put but not update items, so a put must carry
+every profile attribute.) A profile never edited since sign-up has no version.
 
 It also gains `joinedVia: { kind, linkCreatedBy }`, written once at sign-up and never
 edited. Absent means the account predates links.
@@ -267,6 +320,7 @@ candidates in M0, while the data is one user's.
 | `U#<userId>` | `R#<fromUserId>` | incoming friend request: createdAt, challengeId, declinedAt? |
 | `U#<userId>` | `S#<toUserId>` | the same request from the sender's side, written in the same transaction |
 | `U#<userId>` | `RQ#<day>` | friend requests sent that day, with `ttlEpochSeconds` |
+| `U#<userId>` | `A#<key>` | adopted definition: `adoptedAt`. `key` is `<exerciseId>` for an exercise or `<exerciseId>/<variationId>` for a variation (the variation's id alone doesn't say where it's stored). |
 | `X#<exerciseId>` | `X` | created exercise |
 | `X#<exerciseId>` | `V#<variationId>` | created variation on that exercise (built-in exercises too: `X#pull-up V#v-…`) |
 | `C#<digest>` | `C` | pending WebAuthn challenge: purpose, userId?, name?, expiresAt, ttlEpochSeconds |
@@ -288,7 +342,9 @@ definitions are point gets.
 Every change is additive except the protocol gate.
 
 **Protocol gate.** `/api/sync` requires `protocolVersion: 2` in the body. Without it the
-server returns 426 *Update the app*. A v1 client's `normalizeEntry` strips fields it
+server returns 426 *Update the app* with `{ protocolVersion }`, the version it speaks. The
+gate runs before authentication, so a stale client writes nothing. A v2 client that meets a
+426 (from a future v3 server) stops syncing until it reloads, and offers *Update now*. A v1 client's `normalizeEntry` strips fields it
 doesn't know, so if it edited a chin-up, its edit would win under last-writer-wins and turn
 the chin-up back into a pull-up. With the gate, a stale PWA sees 426 once, and the service
 worker loads the new code on its next launch.
@@ -297,12 +353,15 @@ worker loads the new code on its next launch.
 - Request: `{ protocolVersion, pushedEntries, pushedDefinitions, sinceCursor }`.
   `pushedDefinitions` holds created exercises and variations, each merged last-writer-wins
   and rejected if a non-creator tries to change one.
-- Response: as today, plus `definitions` for every created id referenced by the returned
-  entries or by your adopted list. `account` gains the new profile fields and
+- Response: as today, plus `definitions`: every definition on your adopted list, plus any
+  created id the returned entries reference. Exercises and variations share the array; the
+  `x-`/`v-` prefix says which is which. `account` gains the new profile fields and
   `incomingRequests: [{ id, name, challengeId }]`, without tombstones.
 
-**`POST /api/profile`**: `{ name?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,
-last-writer-wins per field. Returns the stored profile.
+**`POST /api/profile`**: `{ name?, nameUpdatedAt?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,
+last-writer-wins per field; every value comes with its clock (`validation.json`'s
+`profilePatches`). Returns the stored profile, shaped like the sync response's `account`.
+A zone change rebuilds recent day totals before it returns (see Time zones).
 
 **`POST /api/friends`**: `{}` → `{ friends: [{ id, name }], friendLink }`.
 **`POST /api/friends/remove`**: `{ friendId }` deletes both sides.

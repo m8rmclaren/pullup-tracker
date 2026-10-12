@@ -1,5 +1,20 @@
-import type { Entry } from './model';
+import { PULL_UP, RING_UNIT, builtInExercise } from './catalog';
+import { type Entry, exerciseIdOf } from './model';
 import { addDays, dayKey, daysBetween, startOfWeek } from './time';
+
+/** An exercise's unit if it is counted, undefined if it is timed or unknown. */
+export type UnitLookup = (exerciseId: string) => string | undefined;
+
+export const builtInUnit: UnitLookup = (exerciseId) => builtInExercise(exerciseId)?.unit;
+
+export type CountedEntry = Entry & { reps: number };
+
+/** A live counted set in an exercise whose unit is "rep": what the ring and its stats sum. */
+export function isRingEntry(entry: Entry, unitOf: UnitLookup = builtInUnit): entry is CountedEntry {
+  return !entry.deleted && entry.reps !== undefined && unitOf(exerciseIdOf(entry)) === RING_UNIT;
+}
+
+const isLivePullUp = (entry: Entry): entry is CountedEntry => !entry.deleted && entry.reps !== undefined && exerciseIdOf(entry) === PULL_UP;
 
 export interface DayTotal {
   day: string;
@@ -13,11 +28,12 @@ export function liveEntries(entries: Iterable<Entry>): Entry[] {
   return undeleted;
 }
 
-export function dailyTotals(entries: Iterable<Entry>): Map<string, DayTotal> {
+/** Ring reps and sets per day. */
+export function dailyTotals(entries: Iterable<Entry>, timeZone: string, unitOf: UnitLookup = builtInUnit): Map<string, DayTotal> {
   const totals = new Map<string, DayTotal>();
   for (const entry of entries) {
-    if (entry.deleted) continue;
-    const day = dayKey(entry.doneAt);
+    if (!isRingEntry(entry, unitOf)) continue;
+    const day = dayKey(entry.doneAt, timeZone);
     const dayTotal = totals.get(day) ?? { day, reps: 0, sets: 0 };
     dayTotal.reps += entry.reps;
     dayTotal.sets += 1;
@@ -68,9 +84,10 @@ export interface Stats {
   firstDay: string | null;
 }
 
-export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number): Stats {
-  const totals = dailyTotals(entries);
-  const todayKey = dayKey(nowMs);
+/** Ring stats: only counted sets in rep-unit exercises (see isRingEntry). */
+export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number, timeZone: string, unitOf: UnitLookup = builtInUnit): Stats {
+  const totals = dailyTotals(entries, timeZone, unitOf);
+  const todayKey = dayKey(nowMs, timeZone);
   const today = totals.get(todayKey) ?? { day: todayKey, reps: 0, sets: 0 };
 
   let firstDay: string | null = null;
@@ -143,12 +160,12 @@ export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: 
   };
 }
 
-/** The rep count logged most often in the last 30 days, for highlighting the usual button. */
-export function usualReps(entries: Iterable<Entry>, nowMs: number): number | null {
-  const cutoff = addDays(dayKey(nowMs), -29);
+/** The pull-up rep count logged most often in the last 30 days, for highlighting the usual button. */
+export function usualReps(entries: Iterable<Entry>, nowMs: number, timeZone: string): number | null {
+  const cutoff = addDays(dayKey(nowMs, timeZone), -29);
   const setCountsByReps = new Map<number, number>();
   for (const entry of entries) {
-    if (entry.deleted || dayKey(entry.doneAt) < cutoff) continue;
+    if (!isLivePullUp(entry) || dayKey(entry.doneAt, timeZone) < cutoff) continue;
     setCountsByReps.set(entry.reps, (setCountsByReps.get(entry.reps) ?? 0) + 1);
   }
   let mostCommonReps: number | null = null;
@@ -168,17 +185,73 @@ export interface HeaviestSet {
   day: string;
 }
 
-/** Most added weight in one set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
-export function heaviestSet(entries: Iterable<Entry>, nowMs: number): HeaviestSet | null {
-  const todayKey = dayKey(nowMs);
+/** Most added weight in one pull-up set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
+export function heaviestSet(entries: Iterable<Entry>, nowMs: number, timeZone: string): HeaviestSet | null {
+  const todayKey = dayKey(nowMs, timeZone);
   let heaviest: HeaviestSet | null = null;
   for (const entry of entries) {
-    if (entry.deleted || !entry.addedWeightLbs) continue;
-    const day = dayKey(entry.doneAt);
+    if (!isLivePullUp(entry) || !entry.addedWeightLbs) continue;
+    const day = dayKey(entry.doneAt, timeZone);
     if (day > todayKey) continue;
     if (!heaviest || entry.addedWeightLbs > heaviest.addedWeightLbs || (entry.addedWeightLbs === heaviest.addedWeightLbs && (entry.reps > heaviest.reps || (entry.reps === heaviest.reps && day > heaviest.day)))) {
       heaviest = { addedWeightLbs: entry.addedWeightLbs, reps: entry.reps, day };
     }
   }
   return heaviest;
+}
+
+/** One exercise's share of a day, in that exercise's own unit. Counted exercises carry reps, timed ones holdSeconds. */
+export interface ExerciseDayTotal {
+  sets: number;
+  reps?: number;
+  bestSetReps?: number;
+  holdSeconds?: number;
+  bestHoldSeconds?: number;
+  /** The most added weight in any one set, absent when every set was bodyweight. */
+  bestAddedWeightLbs?: number;
+}
+
+/**
+ * A user's whole day, as the server stores it for boards. `reps` and `bestSetReps` follow the
+ * ring rule (rep-unit counted sets only); `sets` counts every set; `holdSeconds` sums every hold.
+ */
+export interface DayTotalRecord {
+  day: string;
+  reps: number;
+  sets: number;
+  bestSetReps: number;
+  holdSeconds: number;
+  byExercise: Record<string, ExerciseDayTotal>;
+}
+
+/** Totals for one day's entries (already filtered to that day). */
+export function computeDayTotal(day: string, entries: Iterable<Entry>, unitOf: UnitLookup = builtInUnit): DayTotalRecord {
+  const dayTotal: DayTotalRecord = { day, reps: 0, sets: 0, bestSetReps: 0, holdSeconds: 0, byExercise: {} };
+  for (const entry of entries) {
+    if (entry.deleted) continue;
+    const exerciseId = exerciseIdOf(entry);
+    const exerciseTotal = (dayTotal.byExercise[exerciseId] ??= { sets: 0 });
+    dayTotal.sets++;
+    exerciseTotal.sets++;
+    if (entry.holdSeconds !== undefined) {
+      dayTotal.holdSeconds += entry.holdSeconds;
+      exerciseTotal.holdSeconds = (exerciseTotal.holdSeconds ?? 0) + entry.holdSeconds;
+      exerciseTotal.bestHoldSeconds = Math.max(exerciseTotal.bestHoldSeconds ?? 0, entry.holdSeconds);
+    } else if (entry.reps !== undefined) {
+      exerciseTotal.reps = (exerciseTotal.reps ?? 0) + entry.reps;
+      exerciseTotal.bestSetReps = Math.max(exerciseTotal.bestSetReps ?? 0, entry.reps);
+      if (isRingEntry(entry, unitOf)) {
+        dayTotal.reps += entry.reps;
+        dayTotal.bestSetReps = Math.max(dayTotal.bestSetReps, entry.reps);
+      }
+    }
+    if (entry.addedWeightLbs) exerciseTotal.bestAddedWeightLbs = Math.max(exerciseTotal.bestAddedWeightLbs ?? 0, entry.addedWeightLbs);
+  }
+  return dayTotal;
+}
+
+/** Per-exercise totals of a stored day. A total written before v2 has no byExercise and was all pull-ups. */
+export function exerciseDayTotals(dayTotal: Pick<DayTotalRecord, 'reps' | 'sets' | 'bestSetReps'> & { byExercise?: Record<string, ExerciseDayTotal> }): Record<string, ExerciseDayTotal> {
+  if (dayTotal.byExercise) return dayTotal.byExercise;
+  return dayTotal.sets ? { [PULL_UP]: { sets: dayTotal.sets, reps: dayTotal.reps, bestSetReps: dayTotal.bestSetReps } } : {};
 }

@@ -1,13 +1,13 @@
 import { render } from 'preact';
-import { fetchTransport } from './api';
+import { fetchTransport, profileTransport } from './api';
 import { App } from './App';
 import { Tracker } from './tracker';
 import './styles.css';
 
-const tracker = new Tracker({ storage: localStorage, transport: fetchTransport });
+const tracker = new Tracker({ storage: localStorage, transport: fetchTransport, profileTransport });
 
 // No background-sync API on iOS, so sync opportunistically whenever the app is likely to have signal.
-const syncUnlessSignedOut = () => tracker.status !== 'auth' && void tracker.syncNow();
+const syncUnlessSignedOut = () => tracker.status !== 'auth' && tracker.status !== 'outdated' && void tracker.syncNow();
 window.addEventListener('online', syncUnlessSignedOut);
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && syncUnlessSignedOut());
 setInterval(() => document.visibilityState === 'visible' && syncUnlessSignedOut(), 60_000);

@@ -1,95 +1,53 @@
 {
   "winners": [
-    {
-      "name": "the newer updatedAt wins",
-      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1 },
-      "b": { "id": "a", "doneAt": 1000, "reps": 7, "updatedAt": 2 },
-      "winner": "b"
-    },
-    {
-      "name": "a delete wins a same-tick tie",
-      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 5 },
-      "b": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 5, "deleted": true },
-      "winner": "b"
-    },
-    {
-      "name": "an older delete loses to a newer edit",
-      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 4, "deleted": true },
-      "b": { "id": "a", "doneAt": 1000, "reps": 6, "updatedAt": 5 },
-      "winner": "b"
-    },
-    {
-      "name": "same tick: more reps wins",
-      "a": { "id": "a", "doneAt": 1000, "reps": 8, "updatedAt": 3 },
-      "b": { "id": "a", "doneAt": 1000, "reps": 6, "updatedAt": 3 },
-      "winner": "a"
-    },
-    {
-      "name": "same tick and reps: more added weight wins",
-      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3 },
-      "b": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10 },
-      "winner": "b"
-    },
-    {
-      "name": "same tick, reps and weight: the later doneAt wins",
-      "a": { "id": "a", "doneAt": 2000, "reps": 5, "updatedAt": 3 },
-      "b": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3 },
-      "winner": "a"
-    },
-    {
-      "name": "a stale copy of a set moved into another month loses",
-      "a": { "id": "s", "doneAt": 1793476800000, "reps": 5, "updatedAt": 1 },
-      "b": { "id": "s", "doneAt": 1793563200000, "reps": 5, "updatedAt": 2 },
-      "winner": "b"
-    }
+    {"name": "the newer updatedAt wins", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1}, "b": {"id": "a", "doneAt": 1000, "reps": 7, "updatedAt": 2}, "winner": "b"},
+    {"name": "a delete wins a same-tick tie", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 5}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 5, "deleted": true}, "winner": "b"},
+    {"name": "an older delete loses to a newer edit", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 4, "deleted": true}, "b": {"id": "a", "doneAt": 1000, "reps": 6, "updatedAt": 5}, "winner": "b"},
+    {"name": "same tick: more reps wins", "a": {"id": "a", "doneAt": 1000, "reps": 8, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 6, "updatedAt": 3}, "winner": "a"},
+    {"name": "same tick and reps: more added weight wins", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10}, "winner": "b"},
+    {"name": "same tick, reps and weight: the later doneAt wins", "a": {"id": "a", "doneAt": 2000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3}, "winner": "a"},
+    {"name": "a stale copy of a set moved into another month loses", "a": {"id": "s", "doneAt": 1793476800000, "reps": 5, "updatedAt": 1}, "b": {"id": "s", "doneAt": 1793563200000, "reps": 5, "updatedAt": 2}, "winner": "b"},
+    {"name": "same tick: a longer hold wins", "a": {"id": "a", "doneAt": 1000, "holdSeconds": 30, "updatedAt": 3, "exerciseId": "plank"}, "b": {"id": "a", "doneAt": 1000, "holdSeconds": 45, "updatedAt": 3, "exerciseId": "plank"}, "winner": "b"},
+    {"name": "same tick: reps compare before holdSeconds (a counted set beats a hold)", "a": {"id": "a", "doneAt": 1000, "reps": 1, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "holdSeconds": 600, "updatedAt": 3, "exerciseId": "plank"}, "winner": "a"},
+    {"name": "same tick: holdSeconds compares before added weight", "a": {"id": "a", "doneAt": 1000, "holdSeconds": 20, "updatedAt": 3, "exerciseId": "dead-hang", "addedWeightLbs": 45}, "b": {"id": "a", "doneAt": 1000, "holdSeconds": 21, "updatedAt": 3, "exerciseId": "dead-hang"}, "winner": "b"},
+    {"name": "same tick, amount and weight: the greater exerciseId wins", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "exerciseId": "chin-up"}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "exerciseId": "push-up"}, "winner": "b"},
+    {"name": "same tick: an absent exerciseId compares as pull-up, which sorts before push-up", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "exerciseId": "push-up"}, "winner": "b"},
+    {"name": "same tick: a created exerciseId compares as a string", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "exerciseId": "x-aaaaaaaaaaaaaaaa"}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "exerciseId": "pull-up"}, "winner": "a"},
+    {"name": "same tick and exercise: the greater joined variationIds wins", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "variationIds": ["negative", "wide-grip"]}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "variationIds": ["wide-grip"]}, "winner": "b"},
+    {"name": "same tick: no variations loses to any variation", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "variationIds": ["band"]}, "winner": "b"},
+    {"name": "same tick: variationIds compare before doneAt", "a": {"id": "a", "doneAt": 9000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "variationIds": ["band"]}, "winner": "b"},
+    {"name": "v1 → v2: an explicit pull-up equals an absent exerciseId, so doneAt decides", "a": {"id": "a", "doneAt": 2000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "exerciseId": "pull-up"}, "winner": "a"},
+    {"name": "v1 → v2: a newer v2 edit that changes the exercise wins over the v1 version", "a": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 4, "exerciseId": "chin-up", "variationIds": ["negative"]}, "winner": "b"},
+    {"name": "a stale v1 copy (fields stripped) loses to the v2 version it came from", "a": {"id": "a", "doneAt": 1000, "reps": 8, "updatedAt": 3}, "b": {"id": "a", "doneAt": 1000, "reps": 8, "updatedAt": 5, "exerciseId": "chin-up"}, "winner": "b"}
   ],
   "replicas": [
-    {
-      "name": "commutative, associative and idempotent over three replicas",
-      "replicas": [
-        [
-          { "id": "x", "doneAt": 1000, "reps": 5, "updatedAt": 1 },
-          { "id": "y", "doneAt": 1000, "reps": 8, "updatedAt": 3 }
-        ],
-        [
-          { "id": "x", "doneAt": 1000, "reps": 4, "updatedAt": 2 },
-          { "id": "z", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
-        ],
-        [
-          { "id": "y", "doneAt": 1000, "reps": 5, "updatedAt": 3, "deleted": true },
-          { "id": "x", "doneAt": 1000, "reps": 6, "updatedAt": 2 }
-        ]
-      ],
-      "merged": [
-        { "id": "x", "doneAt": 1000, "reps": 6, "updatedAt": 2 },
-        { "id": "y", "doneAt": 1000, "reps": 5, "updatedAt": 3, "deleted": true },
-        { "id": "z", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
-      ]
-    },
-    {
-      "name": "a weight-only difference on the same tick converges",
-      "replicas": [
-        [{ "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10 }],
-        [{ "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3 }]
-      ],
-      "merged": [{ "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10 }]
-    }
+    {"name": "commutative, associative and idempotent over three replicas", "replicas": [[{"id": "x", "doneAt": 1000, "reps": 5, "updatedAt": 1}, {"id": "y", "doneAt": 1000, "reps": 8, "updatedAt": 3}], [{"id": "x", "doneAt": 1000, "reps": 4, "updatedAt": 2}, {"id": "z", "doneAt": 1000, "reps": 5, "updatedAt": 1}], [{"id": "y", "doneAt": 1000, "reps": 5, "updatedAt": 3, "deleted": true}, {"id": "x", "doneAt": 1000, "reps": 6, "updatedAt": 2}]], "merged": [{"id": "x", "doneAt": 1000, "reps": 6, "updatedAt": 2}, {"id": "y", "doneAt": 1000, "reps": 5, "updatedAt": 3, "deleted": true}, {"id": "z", "doneAt": 1000, "reps": 5, "updatedAt": 1}]},
+    {"name": "a weight-only difference on the same tick converges", "replicas": [[{"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10}], [{"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3}]], "merged": [{"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10}]},
+    {"name": "v1 and v2 shapes of the same versions converge in every order", "replicas": [[{"id": "p", "doneAt": 1000, "reps": 5, "updatedAt": 1}, {"id": "q", "doneAt": 1000, "reps": 6, "updatedAt": 2}], [{"id": "p", "doneAt": 1000, "reps": 5, "updatedAt": 1, "exerciseId": "pull-up", "variationIds": []}, {"id": "q", "doneAt": 1000, "reps": 6, "updatedAt": 3, "exerciseId": "chin-up", "variationIds": ["pause", "band"]}], [{"id": "r", "doneAt": 1000, "holdSeconds": 45, "updatedAt": 1, "exerciseId": "front-lever", "variationIds": ["tuck"]}, {"id": "q", "doneAt": 1000, "reps": 6, "updatedAt": 3, "exerciseId": "chin-up", "variationIds": ["band", "pause"]}]], "merged": [{"id": "p", "doneAt": 1000, "reps": 5, "updatedAt": 1}, {"id": "q", "doneAt": 1000, "exerciseId": "chin-up", "variationIds": ["band", "pause"], "reps": 6, "updatedAt": 3}, {"id": "r", "doneAt": 1000, "exerciseId": "front-lever", "variationIds": ["tuck"], "holdSeconds": 45, "updatedAt": 1}]}
   ],
   "normalize": [
-    {
-      "name": "drops unknown fields",
-      "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "note": "hi" },
-      "normalized": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
-    },
-    {
-      "name": "drops default values",
-      "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 0, "deleted": false },
-      "normalized": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
-    },
-    {
-      "name": "keeps added weight and deletes",
-      "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5, "deleted": true },
-      "normalized": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5, "deleted": true }
-    }
+    {"name": "drops unknown fields", "entry": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "note": "hi"}, "normalized": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1}},
+    {"name": "drops default values", "entry": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 0, "deleted": false}, "normalized": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1}},
+    {"name": "keeps added weight and deletes", "entry": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5, "deleted": true}, "normalized": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5, "deleted": true}},
+    {"name": "drops an explicit pull-up exerciseId", "entry": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "exerciseId": "pull-up"}, "normalized": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1}},
+    {"name": "sorts variationIds", "entry": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "exerciseId": "chin-up", "variationIds": ["wide-grip", "negative", "band"]}, "normalized": {"id": "a", "doneAt": 1000, "exerciseId": "chin-up", "variationIds": ["band", "negative", "wide-grip"], "reps": 5, "updatedAt": 1}},
+    {"name": "drops empty variationIds", "entry": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "variationIds": []}, "normalized": {"id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1}},
+    {"name": "keeps a hold, created ids and added weight", "entry": {"id": "a", "doneAt": 1000, "holdSeconds": 95, "updatedAt": 1, "exerciseId": "x-k3p7aaaaaaaaaaaa", "variationIds": ["v-6qzraaaaaaaaaaaa"], "addedWeightLbs": 10}, "normalized": {"id": "a", "doneAt": 1000, "exerciseId": "x-k3p7aaaaaaaaaaaa", "variationIds": ["v-6qzraaaaaaaaaaaa"], "holdSeconds": 95, "addedWeightLbs": 10, "updatedAt": 1}}
+  ],
+  "definitionWinners": [
+    {"name": "the newer updatedAt wins", "a": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 1000}, "b": {"id": "x-k3p7abcdefgh2345", "name": "Red Rocks stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "winner": "b"},
+    {"name": "same tick: the greater name wins", "a": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "b": {"id": "x-k3p7abcdefgh2345", "name": "Red Rocks stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "winner": "a"},
+    {"name": "same tick and name: the greater description wins, absent compares as empty", "a": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "b": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000, "description": "Bottom to top"}, "winner": "b"},
+    {"name": "variations: the newer updatedAt wins", "a": {"id": "v-6qzrabcdefgh2345", "exerciseId": "muscle-up", "name": "Into tuck", "createdAt": 1000, "updatedAt": 3000}, "b": {"id": "v-6qzrabcdefgh2345", "exerciseId": "muscle-up", "name": "Tuck exit", "createdAt": 1000, "updatedAt": 2000}, "winner": "a"}
+  ],
+  "profiles": [
+    {"name": "a field set at sign-up (no clock) loses to any edit", "stored": {"name": "Hayden"}, "patch": {"name": "Hay", "nameUpdatedAt": 1}, "merged": {"name": "Hay", "nameUpdatedAt": 1}},
+    {"name": "an older edit loses", "stored": {"name": "Hay", "nameUpdatedAt": 50}, "patch": {"name": "Old", "nameUpdatedAt": 40}, "merged": {"name": "Hay", "nameUpdatedAt": 50}},
+    {"name": "each field has its own clock: an older name and a newer goal in one patch", "stored": {"name": "Hay", "nameUpdatedAt": 50, "dailyGoalReps": 35, "goalUpdatedAt": 10}, "patch": {"name": "Old", "nameUpdatedAt": 40, "dailyGoalReps": 50, "goalUpdatedAt": 60}, "merged": {"name": "Hay", "nameUpdatedAt": 50, "dailyGoalReps": 50, "goalUpdatedAt": 60}},
+    {"name": "a first goal and zone on a v1 profile", "stored": {"name": "Hayden"}, "patch": {"dailyGoalReps": 40, "goalUpdatedAt": 5, "timeZone": "Europe/London", "zoneUpdatedAt": 5}, "merged": {"name": "Hayden", "dailyGoalReps": 40, "goalUpdatedAt": 5, "timeZone": "Europe/London", "zoneUpdatedAt": 5}},
+    {"name": "same tick: the greater value wins, in either order", "stored": {"name": "Hayden", "dailyGoalReps": 40, "goalUpdatedAt": 5}, "patch": {"dailyGoalReps": 45, "goalUpdatedAt": 5}, "merged": {"name": "Hayden", "dailyGoalReps": 45, "goalUpdatedAt": 5}},
+    {"name": "same tick: the lesser value loses", "stored": {"name": "Hayden", "dailyGoalReps": 45, "goalUpdatedAt": 5}, "patch": {"dailyGoalReps": 40, "goalUpdatedAt": 5}, "merged": {"name": "Hayden", "dailyGoalReps": 45, "goalUpdatedAt": 5}},
+    {"name": "a zone set at sign-up (no clock) loses to any edit", "stored": {"name": "Ana", "timeZone": "Europe/London"}, "patch": {"timeZone": "America/Denver", "zoneUpdatedAt": 1}, "merged": {"name": "Ana", "timeZone": "America/Denver", "zoneUpdatedAt": 1}},
+    {"name": "an empty patch changes nothing", "stored": {"name": "Ana", "timeZone": "Europe/London", "zoneUpdatedAt": 3}, "patch": {}, "merged": {"name": "Ana", "timeZone": "Europe/London", "zoneUpdatedAt": 3}}
   ]
 }

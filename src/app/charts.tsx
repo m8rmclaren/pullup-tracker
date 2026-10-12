@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { DayTotal } from '../shared/stats';
-import { addDays, dayKey, formatDay, startOfWeek } from '../shared/time';
+import { addDays, formatDay, startOfWeek } from '../shared/time';
 
 export function Ring({ value, goal }: { value: number; goal: number }) {
   const radius = 88;
@@ -137,8 +137,7 @@ export function heatLevel(reps: number, goal: number): 0 | 1 | 2 | 3 | 4 {
   return 1;
 }
 
-export function Heatmap({ dayTotals, now, goal, weeks = 26 }: { dayTotals: Map<string, DayTotal>; now: number; goal: number; weeks?: number }) {
-  const today = dayKey(now);
+export function Heatmap({ dayTotals, today, goal, weeks = 26 }: { dayTotals: Map<string, DayTotal>; today: string; goal: number; weeks?: number }) {
   const firstDay = addDays(startOfWeek(today), -7 * (weeks - 1));
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const weekColumns: string[][] = [];

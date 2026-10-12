@@ -1,29 +1,52 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, type BatchGetCommandOutput, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { type Db, type StoredDayTotal, type Invite, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
+import { type Db, type StoredDayTotal, type Invite, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
-//   U#<userId>  P           profile: id, name, createdAt
-//   U#<userId>  E#<id>      entry: Entry fields + serverWrittenAt   (LSIs `by-server-written-at` and `by-done-at` index these)
-//   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, version, userId; monthPk/monthSk feed GSI `by-month`
+//   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
+//                           dailyGoalReps/goalUpdatedAt (timeZone absent means America/Denver)
+//   U#<userId>  E#<id>      entry: Entry fields (exerciseId?, variationIds? as a list, reps or holdSeconds, …) + serverWrittenAt
+//                           (LSIs `by-server-written-at` and `by-done-at` index these)
+//   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, holdSeconds, byExercise (map), version, userId;
+//                           monthPk/monthSk feed GSI `by-month`. Totals written before v2 lack holdSeconds and byExercise.
 //   T#<hash>    T           device token: userId, createdAt
+//   U#<userId>  A#<key>     adopted definition (key is definitionKeyString: `x-…` or `<exerciseId>/v-…`): adoptedAt
 //   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
+//   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
+//   X#<exId>    V#<varId>   created variation on that exercise, built-in or created: id, exerciseId, name, createdBy?, createdAt, updatedAt, version
 // Only entries carry `serverWrittenAt` and `doneAt`, and only day totals carry `monthPk`, so every index is sparse.
 
 const userPartitionKey = (userId: string) => `U#${userId}`;
 const ENTRY_SK_PREFIX = 'E#';
 const DAY_SK_PREFIX = 'D#';
+const ADOPTED_SK_PREFIX = 'A#';
+
+function definitionItemKey(key: DefinitionKey) {
+  return { pk: `X#${key.exerciseId}`, sk: key.variationId ? `V#${key.variationId}` : 'X' };
+}
+
+function itemToDefinition(item: Record<string, unknown>): StoredDefinition {
+  return { ...normalizeDefinition(item as unknown as Definition), version: item.version as number };
+}
 const MAX_BATCH_GET = 100;
 
 function itemToEntry(item: Record<string, unknown>): StoredEntry {
-  const entry: StoredEntry = { id: item.id as string, doneAt: item.doneAt as number, reps: item.reps as number, updatedAt: item.updatedAt as number, serverWrittenAt: item.serverWrittenAt as number };
+  const entry: StoredEntry = { id: item.id as string, doneAt: item.doneAt as number, updatedAt: item.updatedAt as number, serverWrittenAt: item.serverWrittenAt as number };
+  if (item.exerciseId) entry.exerciseId = item.exerciseId as string;
+  if ((item.variationIds as string[] | undefined)?.length) entry.variationIds = item.variationIds as string[];
+  if (item.reps !== undefined) entry.reps = item.reps as number;
+  if (item.holdSeconds !== undefined) entry.holdSeconds = item.holdSeconds as number;
   if (item.addedWeightLbs) entry.addedWeightLbs = item.addedWeightLbs as number;
   if (item.deleted) entry.deleted = true;
   return entry;
 }
 
 function itemToDayTotal(item: Record<string, unknown>): StoredDayTotal {
-  return { day: item.day as string, reps: item.reps as number, sets: item.sets as number, bestSetReps: item.bestSetReps as number, version: item.version as number };
+  const dayTotal: StoredDayTotal = { day: item.day as string, reps: item.reps as number, sets: item.sets as number, bestSetReps: item.bestSetReps as number, version: item.version as number };
+  if (item.holdSeconds !== undefined) dayTotal.holdSeconds = item.holdSeconds as number;
+  if (item.byExercise !== undefined) dayTotal.byExercise = item.byExercise as StoredDayTotal['byExercise'];
+  return dayTotal;
 }
 
 /** Maps a lost condition (single put or transaction) to PreconditionFailed. */
@@ -50,18 +73,78 @@ export class DynamoDb implements Db {
     private tableName: string,
   ) {}
 
-  async getEntries(userId: string, ids: string[]) {
-    const entriesById = new Map<string, StoredEntry>();
-    for (let i = 0; i < ids.length; i += MAX_BATCH_GET) {
-      let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + MAX_BATCH_GET).map((id) => ({ pk: userPartitionKey(userId), sk: ENTRY_SK_PREFIX + id }));
+  /** Strongly consistent, in chunks, retrying whatever DynamoDB leaves unprocessed. */
+  private async batchGetItems(itemKeys: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    const items: Record<string, unknown>[] = [];
+    for (let i = 0; i < itemKeys.length; i += MAX_BATCH_GET) {
+      let keys: Record<string, unknown>[] | undefined = itemKeys.slice(i, i + MAX_BATCH_GET);
       for (let attempt = 0; keys?.length; attempt++) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(1000, 25 * 2 ** attempt)));
         const response: BatchGetCommandOutput = await this.documentClient.send(new BatchGetCommand({ RequestItems: { [this.tableName]: { Keys: keys, ConsistentRead: true } } }));
-        for (const item of response.Responses?.[this.tableName] ?? []) entriesById.set(item.id as string, itemToEntry(item));
+        items.push(...(response.Responses?.[this.tableName] ?? []));
         keys = response.UnprocessedKeys?.[this.tableName]?.Keys;
       }
     }
-    return entriesById;
+    return items;
+  }
+
+  async getEntries(userId: string, ids: string[]) {
+    const items = await this.batchGetItems(ids.map((id) => ({ pk: userPartitionKey(userId), sk: ENTRY_SK_PREFIX + id })));
+    return new Map(items.map((item) => [item.id as string, itemToEntry(item)]));
+  }
+
+  async getDefinitions(keys: DefinitionKey[]) {
+    const uniqueKeys = [...new Map(keys.map((key) => [definitionKeyString(key), key])).values()];
+    const items = await this.batchGetItems(uniqueKeys.map(definitionItemKey));
+    const definitionsByKey = new Map<string, StoredDefinition>();
+    for (const item of items) {
+      const definition = itemToDefinition(item);
+      definitionsByKey.set(definitionKeyString(definitionKeyOf(definition)), definition);
+    }
+    return definitionsByKey;
+  }
+
+  async createDefinition(definition: StoredDefinition, userId: string, adoptedAt: number) {
+    const key = definitionKeyOf(definition);
+    await mapConditionFailure(
+      this.documentClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            { Put: { TableName: this.tableName, Item: { ...definitionItemKey(key), ...definition }, ConditionExpression: 'attribute_not_exists(pk)' } },
+            { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: ADOPTED_SK_PREFIX + definitionKeyString(key), adoptedAt } } },
+          ],
+        }),
+      ),
+    );
+  }
+
+  async putDefinition(definition: StoredDefinition, expectedVersion: number) {
+    const Item = { ...definitionItemKey(definitionKeyOf(definition)), ...definition };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
+  }
+
+  async adoptedDefinitionKeys(userId: string) {
+    const keys: DefinitionKey[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const response: QueryCommandOutput = await this.documentClient.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          ConsistentRead: true,
+          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+          ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': ADOPTED_SK_PREFIX },
+          ProjectionExpression: 'sk',
+          ExclusiveStartKey: exclusiveStartKey,
+        }),
+      );
+      for (const item of response.Items ?? []) keys.push(parseDefinitionKeyString((item.sk as string).slice(ADOPTED_SK_PREFIX.length)));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return keys;
+  }
+
+  async adoptDefinition(userId: string, key: DefinitionKey, adoptedAt: number) {
+    await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: ADOPTED_SK_PREFIX + definitionKeyString(key), adoptedAt } }));
   }
 
   async putEntry(userId: string, entry: StoredEntry, expectedServerWrittenAt: number | null) {
@@ -107,7 +190,21 @@ export class DynamoDb implements Db {
 
   async getUser(userId: string) {
     const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'P' }, ConsistentRead: true }));
-    return response.Item ? { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number } : null;
+    if (!response.Item) return null;
+    const user: User = { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number };
+    for (const field of ['nameUpdatedAt', 'timeZone', 'zoneUpdatedAt', 'dailyGoalReps', 'goalUpdatedAt', 'version'] as const) {
+      if (response.Item[field] !== undefined) (user as unknown as Record<string, unknown>)[field] = response.Item[field];
+    }
+    return user;
+  }
+
+  // A put replaces the whole item (the API role may not UpdateItem), so every profile attribute must be a field of User.
+  async putProfile(user: User, expectedVersion: number | null) {
+    const condition =
+      expectedVersion === null
+        ? { ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(#version)', ExpressionAttributeNames: { '#version': 'version' } }
+        : { ConditionExpression: '#version = :expected', ExpressionAttributeNames: { '#version': 'version' }, ExpressionAttributeValues: { ':expected': expectedVersion } };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: userPartitionKey(user.id), sk: 'P', ...user }, ...condition })));
   }
 
   async userIdForToken(tokenHash: string) {

@@ -2,6 +2,7 @@ import { useRef, useState } from 'preact/hooks';
 import { type Entry, formatAddedWeight } from '../shared/model';
 import type { Stats } from '../shared/stats';
 import { dayKey, formatClock } from '../shared/time';
+import { describeSet, exerciseLabel, formatAmount } from './labels';
 import { Ring } from './charts';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
@@ -14,6 +15,7 @@ interface TodayProps {
   tracker: Tracker;
   stats: Stats;
   now: number;
+  timeZone: string;
   usualSetReps: number | null;
   onLogged: (entry: Entry) => void;
   onEdit: (entry: Entry) => void;
@@ -22,14 +24,14 @@ interface TodayProps {
   onOpenPadWeight: () => void;
 }
 
-export function Today({ tracker, stats, now, usualSetReps, onLogged, onEdit, onOpenCustomEntry, onOpenSettings, onOpenPadWeight }: TodayProps) {
+export function Today({ tracker, stats, now, timeZone, usualSetReps, onLogged, onEdit, onOpenCustomEntry, onOpenSettings, onOpenPadWeight }: TodayProps) {
   const lastTapAtMs = useRef(0);
   const [pressedReps, setPressedReps] = useState<number | null>(null);
-  const goal = tracker.settings.goal;
-  const today = dayKey(now);
+  const goal = tracker.goal();
+  const today = dayKey(now, timeZone);
   const todaysSets = tracker
     .allEntries()
-    .filter((entry) => !entry.deleted && dayKey(entry.doneAt) === today)
+    .filter((entry) => !entry.deleted && dayKey(entry.doneAt, timeZone) === today)
     .sort((a, b) => b.doneAt - a.doneAt);
   const { reps } = stats.today;
   const repsLeft = goal - reps;
@@ -84,10 +86,11 @@ export function Today({ tracker, stats, now, usualSetReps, onLogged, onEdit, onO
           <ul class="set-chips">
             {todaysSets.map((entry) => (
               <li key={entry.id}>
-                <button type="button" class="set-chip" onClick={() => onEdit(entry)} aria-label={`${entry.reps} reps${entry.addedWeightLbs ? ` with ${entry.addedWeightLbs} pounds` : ''} at ${formatClock(entry.doneAt)}, edit`}>
-                  <b>{entry.reps}</b>
+                <button type="button" class="set-chip" onClick={() => onEdit(entry)} aria-label={`${describeSet(entry, tracker)} at ${formatClock(entry.doneAt, timeZone)}, edit`}>
+                  <b>{formatAmount(entry, tracker)}</b>
+                  {exerciseLabel(entry, tracker) ? <em class="set-chip__exercise">{exerciseLabel(entry, tracker)}</em> : null}
                   {entry.addedWeightLbs ? <em class="set-chip__lbs">{formatAddedWeight(entry.addedWeightLbs)}</em> : null}
-                  <span>{formatClock(entry.doneAt)}</span>
+                  <span>{formatClock(entry.doneAt, timeZone)}</span>
                 </button>
               </li>
             ))}

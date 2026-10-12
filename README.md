@@ -119,15 +119,15 @@ There are two independent locks on the API, and no AWS credential ever reaches a
    request with SigV4 through Origin Access Control. Hitting the raw `*.lambda-url…` host
    directly returns 403. (For POST bodies OAC needs the payload hash, so the client sends
    `x-amz-content-sha256`; that's computed with WebCrypto and isn't a secret.)
-2. **Only members get past the Lambda.** Every request to `/api/sync` and `/api/invite`
-   carries `X-Pullup-Token`, a 256-bit random token issued to that one device when it
-   redeemed an invite. The table stores only its SHA-256 digest (`T#<digest>` → user id),
+2. **Only members get past the Lambda.** Every request to `/api/sync`, `/api/profile` and
+   `/api/invite` carries `X-Pullup-Token`, a 256-bit random token issued to that one device
+   when it redeemed an invite. The table stores only its SHA-256 digest (`T#<digest>` → user id),
    so a leaked table backup grants no access. The Lambda caches lookups for a minute.
 
 A custom header is used instead of `Authorization` because OAC replaces `Authorization`
 with its own signature on the way to the origin.
 
-**Invites.** `POST /api/join { code, name }` is the only unauthenticated route. Codes are
+**Invites.** `POST /api/join { code, name, timeZone }` is the only unauthenticated route. Codes are
 256-bit, single-use, and also stored only as digests. Redeeming one is a single DynamoDB
 transaction: it deletes the invite (conditional on it still existing), creates the device
 token and, for a friend invite, the new user. Two people racing for one link can't both
@@ -159,9 +159,11 @@ top of `src/lambda/dynamodb.ts`:
 
 | pk | sk | item |
 |---|---|---|
-| `U#<userId>` | `P` | profile: name |
+| `U#<userId>` | `P` | profile: name, `timeZone` (IANA; absent means `America/Denver`), daily goal, a clock per editable field |
 | `U#<userId>` | `E#<id>` | one set, plus `serverWrittenAt`, the server time it was written |
-| `U#<userId>` | `D#2026-10-08` | that user's day total: reps, sets, best set |
+| `U#<userId>` | `D#2026-10-08` | that user's day total: ring reps, sets, best set, hold seconds, and the same per exercise (`byExercise`) |
+| `U#<userId>` | `A#<key>` | a created exercise or variation that user made or logs to |
+| `X#<exerciseId>` | `X` / `V#<variationId>` | a created exercise, or a variation on an exercise |
 | `T#<digest>` | `T` | device token → user id |
 | `I#<digest>` | `I` | pending invite |
 
@@ -169,10 +171,15 @@ Each set is stored as:
 
 ```json
 { "id": "9f2c…", "doneAt": 1791489600000, "reps": 6, "updatedAt": 1791489600000 }
+{ "id": "7a1d…", "doneAt": 1791489600000, "exerciseId": "front-lever", "variationIds": ["tuck"], "holdSeconds": 45, "updatedAt": 1791489600000 }
 ```
 
 `doneAt` is when you did the set (it decides the day). `updatedAt` is the version clock.
 A deleted set stays as a tombstone with `"deleted": true` so the delete itself can sync.
+A set with no `exerciseId` is a pull-up, which is how every set from before v2 reads. A
+set has exactly one of `reps` (a count in its exercise's unit) and `holdSeconds`. Built-in
+exercises and variations are in `src/shared/catalog.json`; the full rules are in
+`docs/v2-design.md`.
 
 **No lost writes, by construction.** The entry set is a state-based CRDT: per-entry
 last-writer-wins with a deterministic tiebreak (delete beats edit on a same-millisecond tie).
@@ -184,19 +191,29 @@ re-reads, re-merges and retries. A test fires 12 concurrent pushes through an
 interleaving store to prove it, and the same suite runs against DynamoDB Local in CI.
 
 **Day totals for the leaderboard.** After writing, the Lambda recomputes the total for
-every Denver day a push touched, both the old and new day when a set moves. It sums that
+every day (in that user's zone) a push touched, both the old and new day when a set moves. It sums that
 day's sets through the `by-done-at` index and writes the result conditional on the total's
 version, so a stale recompute can't overwrite a newer one. Day totals carry `monthPk` =
 `M#2026-10`, which puts every user's days for a month in the `by-month` GSI, so a board
 for any period is one query. A retried push recomputes even when its sets were already
 written, which heals a request that died between the two steps.
 
-**Delta sync.** `POST /api/sync { pushedEntries: Entry[], sinceCursor: <cursor> }` pushes the outbox and
+**Delta sync.** `POST /api/sync { protocolVersion: 2, pushedEntries, pushedDefinitions, sinceCursor }` pushes the outbox and
 returns every set of yours written after the cursor (queried via the `by-server-written-at` index), plus
 a new cursor. The cursor deliberately trails the server clock by 30 s, longer than the
 Lambda timeout, so a write that was stamped but still in flight can never slip behind
 it. The cost is that a recent write is sent back once more, which the merge ignores. A
 fresh device sends `sinceCursor: 0` and gets everything in one round trip.
+
+**Created exercises and variations** travel in the same request, merged before the sets
+so a set can log to an exercise made offline a moment ago. Only the creator can rename one,
+and its measure and unit never change. Every response carries the definitions you've made
+or logged to, so a rename reaches all your devices.
+
+**The protocol gate.** A request without `protocolVersion: 2` gets **426**. A client that
+predates a field strips it when it normalizes a set, so its edit would silently undo
+another client's change. A turned-away PWA keeps its outbox and shows *Update*; the next
+launch loads the new build through the service worker, and the queued sets go up then.
 
 **Backups.** Point-in-time recovery is on, so the table can be restored to any second
 in the last 35 days.
@@ -239,12 +256,15 @@ user's files on every view. In DynamoDB each set is its own item, so a push writ
 what changed and a sync reads only what's new. The per-day totals sit in an index that
 answers "everyone's October" with one query.
 
-**Days are computed in America/Denver everywhere**, for every user, regardless of the device's zone, via
-`Intl.DateTimeFormat`. Day keys are `YYYY-MM-DD` strings with pure calendar arithmetic, so
-the 23- and 25-hour DST days count as one day each. Sets entered by hand
-(“Other amount or time…”) take a Denver wall-clock time. A time skipped by spring-forward
-moves an hour later, and the repeated fall-back hour resolves to its first occurrence. The
-UI rolls over at local midnight even if the app is left open.
+**Days are computed in each account's own time zone**, an IANA name on the profile, via
+`Intl.DateTimeFormat`. A new account takes the zone of the device that joins, and every
+account made before zones were per user has none stored, which means `America/Denver`, so
+its stored day keys never move. A device that hasn't joined uses its own zone. Day keys
+are `YYYY-MM-DD` strings with pure calendar arithmetic, so the 23- and 25-hour DST days
+count as one day each. Sets entered by hand (“Other amount or time…”) take a wall-clock
+time in the account's zone. A time skipped by spring-forward moves an hour later, and the
+repeated fall-back hour resolves to its first occurrence. The UI rolls over at midnight in
+that zone even if the app is left open.
 
 **Preact (~4 KB gz) rather than vanilla or React.** The UI has several views, sheets and
 derived stats that re-render together. Preact gives components and hooks for the price of
@@ -282,8 +302,11 @@ current streak under it. Trends has:
 - **A 30/90-day chart, a 26-week heatmap, and a tappable 30-day history list.** The list
   doubles as the accessible table view of the chart data.
 
-**Daily goal is per-device** (default 35). Syncing it would need a second LWW record and
-a settings file. It's a one-time setting, so that wasn't worth the extra moving parts.
+**Daily goal, time zone and name live on the profile** (`POST /api/profile`), each its own
+last-writer-wins field, so every device agrees. Edits apply at once and are sent before the
+next sync, so they work offline like sets do. Until an account's goal is first set, each
+device shows its own (default 35), so nobody's ring moved when this shipped. Changing the
+zone re-keys the last 62 days of totals; older days keep theirs.
 
 **Dark-first** (gym lighting, OLED), with a light theme that follows the OS. System
 rounded font with tabular numerals, so digits don't jump as totals change.
@@ -322,31 +345,39 @@ run the same files. They include a **v1 golden history** whose expected stats an
 totals were generated by the v1 code and are never regenerated.
 
 - `test/time.test.ts`, `test/model.test.ts`, `test/stats.test.ts`: run `days.json`,
-  `merge.json`, `validation.json` and `stats.json`. Day boundaries in both Denver offsets,
+  `merge.json`, `validation.json` and `stats.json`. Day boundaries in Denver, London, Sydney and Kolkata,
   evening sessions that cross UTC midnight, month and year edges, both DST transitions,
-  wall-clock → instant conversion; LWW tiebreaks, convergence in every merge order,
-  normalization and input validation; daily totals with tombstones, streak rules,
+  wall-clock → instant conversion; LWW tiebreaks through every v2 field, v1 → v2 shapes,
+  convergence in every merge order, normalization and input validation against the
+  catalog; the ring rule (only rep-unit counted sets); daily totals with tombstones, streak rules,
   completed-day averages, week-to-date comparison, best day, empty history.
 - `test/server-sync.test.ts`: the v1 golden history's stored day totals, delta sync and
   the cursor lag (including a write that commits after a later sync started), day totals through edits, deletes and moves, healing
   a total on retry, **12 concurrent writers losing nothing**, concurrent edit vs. delete,
-  stale recomputes, per-user isolation, friend invites and device links (single-use,
+  stale recomputes, the protocol gate, v2 fields end to end, per-user isolation, friend invites and device links (single-use,
   expiry), and bad input.
 - `test/dynamodb.test.ts`: the DynamoDB adapter against DynamoDB Local. It covers the
   v1 golden history, the conditional puts, both LSIs across query pages, the month GSI,
   concurrent syncs, and three people racing to redeem one invite.
+- `test/definitions.test.ts`: created exercises and variations through `/api/sync`: made
+  offline and logged to in one push, reaching other devices, staying private until logged
+  to, creator-only renames, fixed measure and unit, and the measure check.
+- `test/profile.test.ts`: `/api/profile` on a pre-v2 profile, per-field last-writer-wins
+  across devices, concurrent edits, re-keying 62 days on a zone change (and healing a
+  retried one), and no rebuild for an edit that lost.
 - `test/tracker.test.ts`: the client replica. It covers persistence before network,
   debounced batching, an edit during an in-flight push, two devices converging after
   offline edit/delete conflicts, a fresh device pulling history, the cursor and its reset
-  on account change, sets logged before joining, undo before first sync, backoff, and
-  stopping when signed out.
+  on account change, sets logged before joining, undo before first sync, backoff,
+  stopping when signed out or turned away by the protocol gate, and editing a v2 set
+  without losing the fields this UI doesn't show.
 - `test/handler.test.ts`: the Lambda entrypoint. It covers Function URL events, base64
   bodies, token-lookup caching, and opaque 500s.
 
 ## Layout
 
 ```
-src/shared/   time.ts (Denver calendar), model.ts (entries + CRDT merge), stats.ts
+src/shared/   time.ts (calendar in any zone), model.ts (entries + CRDT merge), stats.ts
 src/lambda/   handler.ts → http.ts (routes) → sync.ts (merge + day totals), accounts.ts (invites)
               → db.ts (interface + in-memory) / dynamodb.ts
 src/app/      tracker.ts (local replica + sync engine), api.ts, App/Today/Trends/sheets/charts, sw.ts

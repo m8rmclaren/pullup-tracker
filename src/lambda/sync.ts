@@ -1,4 +1,7 @@
-import { type Entry, type SyncResponse, normalizeEntry, pickWinner, sameVersion } from '../shared/model';
+import { type Entry, type SyncResponse, exerciseIdOf, normalizeEntry, pickWinner, sameVersion } from '../shared/model';
+import { isCreatedExerciseId } from '../shared/catalog';
+import type { ExerciseDefinition } from '../shared/definitions';
+import { type UnitLookup, builtInUnit, computeDayTotal } from '../shared/stats';
 import { addDays, dayKey, wallClockToEpochMs } from '../shared/time';
 import { type Db, type StoredEntry, PreconditionFailed } from './db';
 
@@ -33,14 +36,14 @@ export async function mapWithConcurrency<T, R>(items: T[], limit: number, mapIte
 const sleepBeforeRetry = (attempt: number) => new Promise((resolve) => setTimeout(resolve, Math.random() * 20 * (attempt + 1)));
 
 /**
- * Writes `incoming` if it beats the stored version. Returns the Denver days whose totals to
+ * Writes `incoming` if it beats the stored version. Returns the days, in the user's zone, whose totals to
  * recompute, even when nothing was written: a retried push may follow a request that wrote
  * the entry and then died before totalling its day. Conditional on the stored `serverWrittenAt`,
  * which strictly increases per entry, so a concurrent writer is always detected and the merge
  * is redone against what it wrote.
  */
-async function mergeEntry(db: Db, userId: string, incoming: Entry, stored: StoredEntry | null, clock: Clock): Promise<string[]> {
-  const affectedDays = (previous: StoredEntry | null) => (previous ? [dayKey(previous.doneAt), dayKey(incoming.doneAt)] : [dayKey(incoming.doneAt)]);
+async function mergeEntry(db: Db, userId: string, timeZone: string, incoming: Entry, stored: StoredEntry | null, clock: Clock): Promise<string[]> {
+  const affectedDays = (previous: StoredEntry | null) => (previous ? [dayKey(previous.doneAt, timeZone), dayKey(incoming.doneAt, timeZone)] : [dayKey(incoming.doneAt, timeZone)]);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (stored && sameVersion(pickWinner(stored, incoming), stored)) return affectedDays(stored);
     const next: StoredEntry = { ...normalizeEntry(incoming), serverWrittenAt: Math.max(clock.now(), (stored?.serverWrittenAt ?? 0) + 1) };
@@ -61,19 +64,15 @@ async function mergeEntry(db: Db, userId: string, incoming: Entry, stored: Store
  * writes land, and the put is conditional on the version it read, so the last successful
  * recompute always saw every committed entry.
  */
-export async function recomputeDayTotal(db: Db, userId: string, day: string): Promise<void> {
-  const fromMs = wallClockToEpochMs(day, '00:00');
-  const toMs = wallClockToEpochMs(addDays(day, 1), '00:00');
+export async function recomputeDayTotal(db: Db, userId: string, day: string, timeZone: string): Promise<void> {
+  const fromMs = wallClockToEpochMs(day, '00:00', timeZone);
+  const toMs = wallClockToEpochMs(addDays(day, 1), '00:00', timeZone);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const stored = await db.getDayTotal(userId, day);
     const liveEntries = (await db.entriesDoneBetween(userId, fromMs, toMs)).filter((entry) => !entry.deleted);
-    const dayTotal = {
-      day,
-      reps: liveEntries.reduce((reps, entry) => reps + entry.reps, 0),
-      sets: liveEntries.length,
-      bestSetReps: liveEntries.reduce((bestSetReps, entry) => Math.max(bestSetReps, entry.reps), 0),
-      version: (stored?.version ?? 0) + 1,
-    };
+    const dayTotal = { ...computeDayTotal(day, liveEntries, await unitLookupFor(db, liveEntries)), version: (stored?.version ?? 0) + 1 };
+    // An empty day reads the same with no total at all, so none is created for one.
+    if (!stored && dayTotal.sets === 0) return;
     try {
       await db.putDayTotal(userId, dayTotal, stored?.version ?? null);
       return;
@@ -85,11 +84,19 @@ export async function recomputeDayTotal(db: Db, userId: string, day: string): Pr
   throw new Error(`gave up totalling ${day} after ${MAX_ATTEMPTS} conflicting writes`);
 }
 
+/** Units for the exercises these entries log to: built-ins from the catalog, created ones in one batch get. */
+async function unitLookupFor(db: Db, entries: Entry[]): Promise<UnitLookup> {
+  const createdIds = [...new Set(entries.map(exerciseIdOf).filter(isCreatedExerciseId))];
+  if (!createdIds.length) return builtInUnit;
+  const definitions = await db.getDefinitions(createdIds.map((exerciseId) => ({ exerciseId })));
+  return (exerciseId) => builtInUnit(exerciseId) ?? (definitions.get(exerciseId) as ExerciseDefinition | undefined)?.unit;
+}
+
 function withoutServerFields({ serverWrittenAt: _, ...entry }: StoredEntry): Entry {
   return entry;
 }
 
-export async function syncEntries(db: Db, userId: string, pushedEntries: Entry[], sinceCursor: number, clock: Clock = { now: Date.now }): Promise<Omit<SyncResponse, 'account'>> {
+export async function syncEntries(db: Db, userId: string, timeZone: string, pushedEntries: Entry[], sinceCursor: number, clock: Clock = { now: Date.now }): Promise<Omit<SyncResponse, 'account' | 'definitions'>> {
   // One device can't send two versions of an entry, but a hand-edited import could.
   const incoming = new Map<string, Entry>();
   for (const entry of pushedEntries) {
@@ -98,8 +105,8 @@ export async function syncEntries(db: Db, userId: string, pushedEntries: Entry[]
   }
 
   const storedEntries = await db.getEntries(userId, [...incoming.keys()]);
-  const touchedDays = await mapWithConcurrency([...incoming.values()], 16, (entry) => mergeEntry(db, userId, entry, storedEntries.get(entry.id) ?? null, clock));
-  await mapWithConcurrency([...new Set(touchedDays.flat())], 8, (day) => recomputeDayTotal(db, userId, day));
+  const touchedDays = await mapWithConcurrency([...incoming.values()], 16, (entry) => mergeEntry(db, userId, timeZone, entry, storedEntries.get(entry.id) ?? null, clock));
+  await mapWithConcurrency([...new Set(touchedDays.flat())], 8, (day) => recomputeDayTotal(db, userId, day, timeZone));
 
   const startMs = clock.now();
   const entries = await db.entriesWrittenAfter(userId, sinceCursor);

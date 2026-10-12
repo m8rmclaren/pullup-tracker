@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { hashToken } from '../src/lambda/auth';
 import { MemoryDb } from '../src/lambda/db';
+import { route } from '../src/lambda/http';
 import { syncEntries } from '../src/lambda/sync';
-import type { Entry, SyncRequest, SyncResponse } from '../src/shared/model';
-import { HttpError, type KeyValueStorage, Tracker, type Transport, backoffMs } from '../src/app/tracker';
+import type { Account, Entry, SyncRequest, SyncResponse } from '../src/shared/model';
+import { computeStats } from '../src/shared/stats';
+import { HttpError, type KeyValueStorage, type ProfileTransport, Tracker, type Transport, backoffMs } from '../src/app/tracker';
 
 class MemoryStorage implements KeyValueStorage {
   items = new Map<string, string>();
@@ -40,13 +43,19 @@ function makeTracker(transport: Transport, storage = new MemoryStorage(), clock 
 }
 
 const USER_ID = 'u1';
-const ACCOUNT = { id: USER_ID, name: 'Me' };
-const EMPTY_RESPONSE: SyncResponse = { entries: [], cursor: 0, account: ACCOUNT };
+const ACCOUNT = { id: USER_ID, name: 'Me', timeZone: 'America/Denver' };
+const EMPTY_RESPONSE: SyncResponse = { entries: [], definitions: [], cursor: 0, account: ACCOUNT };
+const SERVER_TOKEN = 'tracker-test-server-token-0123456789';
 
-/** The server's sync logic for one account, with the request round-tripped through JSON like the wire. */
+/** The real route for one account, with the request round-tripped through JSON like the wire. Every device token maps to that account. */
 const serveSync = async (db: MemoryDb, request: SyncRequest): Promise<SyncResponse> => {
-  const wireRequest = JSON.parse(JSON.stringify(request)) as SyncRequest;
-  return { ...(await syncEntries(db, USER_ID, wireRequest.pushedEntries, wireRequest.sinceCursor)), account: ACCOUNT };
+  if (!db.users.has(USER_ID)) {
+    db.users.set(USER_ID, { id: USER_ID, name: 'Me', createdAt: 1 });
+    db.tokens.set(hashToken(SERVER_TOKEN), USER_ID);
+  }
+  const response = await route({ method: 'POST', path: '/api/sync', headers: { 'x-pullup-token': SERVER_TOKEN }, body: JSON.stringify(request) }, { db });
+  if (response.status !== 200) throw new HttpError(response.status, (response.body as { error: string }).error);
+  return JSON.parse(JSON.stringify(response.body)) as SyncResponse;
 };
 const serverTransport = (db: MemoryDb): Transport => (request) => serveSync(db, request);
 const storedEntry = (db: MemoryDb, id: string): Entry | undefined => db.entries.get(USER_ID)?.get(id);
@@ -197,6 +206,101 @@ describe('Tracker', () => {
     expect(clock.pending()).toBe(0);
   });
 
+  it('speaks protocol v2, and stops syncing for good when the server turns its version away', async () => {
+    const requests: SyncRequest[] = [];
+    let isOutdated = false;
+    const { tracker, clock } = makeTracker(async (request) => {
+      requests.push(request);
+      if (isOutdated) throw new HttpError(426, 'Update the app to keep syncing.');
+      return serveSync(db, request);
+    });
+    tracker.add(5);
+    await tracker.syncNow();
+    expect(requests[0]!.protocolVersion).toBe(2);
+
+    isOutdated = true;
+    tracker.add(6);
+    clock.timers = [];
+    await tracker.syncNow();
+    expect(tracker.status).toBe('outdated');
+    expect(tracker.lastError).toMatch(/Reload to update/);
+    expect(clock.pending()).toBe(0);
+    tracker.add(7);
+    await tracker.syncNow();
+    expect(requests).toHaveLength(2);
+    expect(tracker.status).toBe('outdated');
+    expect(tracker.pendingCount()).toBe(2);
+  });
+
+  it('editing a set from a newer client keeps the fields this UI doesn’t show', async () => {
+    const chinUp: Entry = { id: 'v2a', doneAt: Date.parse('2026-10-08T15:00:00Z'), updatedAt: 1, exerciseId: 'chin-up', variationIds: ['band', 'negative'], reps: 5 };
+    const lever: Entry = { id: 'v2b', doneAt: Date.parse('2026-10-08T15:05:00Z'), updatedAt: 1, exerciseId: 'front-lever', variationIds: ['tuck'], holdSeconds: 20 };
+    await syncEntries(db, USER_ID, 'America/Denver', [chinUp, lever], 0);
+    const { tracker } = makeTracker(serverTransport(db));
+    await tracker.syncNow();
+
+    tracker.update(chinUp.id, { reps: 6, addedWeightLbs: 10 });
+    tracker.update(lever.id, { holdSeconds: 25, reps: 99, doneAt: lever.doneAt + 60_000 });
+    await tracker.syncNow();
+    expect(storedEntry(db, chinUp.id)).toMatchObject({ exerciseId: 'chin-up', variationIds: ['band', 'negative'], reps: 6, addedWeightLbs: 10 });
+    expect(storedEntry(db, lever.id)).toMatchObject({ exerciseId: 'front-lever', variationIds: ['tuck'], holdSeconds: 25, doneAt: lever.doneAt + 60_000 });
+    expect(storedEntry(db, lever.id)).not.toHaveProperty('reps');
+
+    tracker.remove(lever.id);
+    tracker.restore(lever.id);
+    await tracker.syncNow();
+    expect(storedEntry(db, lever.id)).toMatchObject({ exerciseId: 'front-lever', holdSeconds: 25 });
+    expect(storedEntry(db, lever.id)).not.toHaveProperty('deleted');
+  });
+
+  it('creates an exercise and logs to it offline, then syncs both, and other devices see it', async () => {
+    let isOnline = false;
+    const { tracker, clock } = makeTracker(async (request) => {
+      if (!isOnline) throw new TypeError('Failed to fetch');
+      return serveSync(db, request);
+    });
+    const stairs = tracker.createExercise({ name: 'Red Rocks stairs', measure: 'count', unit: 'lap', description: 'Bottom to top' });
+    const typewriters = tracker.createExercise({ name: 'Archer typewriters', measure: 'count', unit: 'rep' });
+    const wallSit = tracker.createExercise({ name: 'Wall sit', measure: 'time' });
+    const intoTuck = tracker.createVariation('muscle-up', 'Into tuck');
+    expect(stairs.id).toMatch(/^x-[a-z2-7]{16}$/);
+    expect(intoTuck.id).toMatch(/^v-[a-z2-7]{16}$/);
+    tracker.log({ exerciseId: stairs.id, reps: 3 });
+    tracker.log({ exerciseId: typewriters.id, reps: 10 });
+    tracker.log({ exerciseId: wallSit.id, holdSeconds: 90 });
+    tracker.log({ exerciseId: 'muscle-up', variationIds: [intoTuck.id], reps: 2 });
+    tracker.add(8);
+    await tracker.syncNow();
+    expect(tracker.pendingCount()).toBe(9);
+
+    isOnline = true;
+    await tracker.syncNow();
+    expect(tracker.pendingCount()).toBe(0);
+    expect(db.definitions.get(stairs.id)).toMatchObject({ name: 'Red Rocks stairs', createdBy: USER_ID });
+    expect(tracker.allDefinitions().every((definition) => definition.createdBy === USER_ID)).toBe(true);
+
+    const otherDevice = makeTracker(serverTransport(db)).tracker;
+    await otherDevice.syncNow();
+    expect(otherDevice.exercise(stairs.id)).toMatchObject({ name: 'Red Rocks stairs', unit: 'lap' });
+    expect(otherDevice.variationName('muscle-up', intoTuck.id)).toBe('Into tuck');
+    // The ring counts the pull-ups, muscle-ups and the created rep-unit exercise; not laps, not the hold.
+    const ringReps = computeStats(otherDevice.allEntries(), clock.nowMs, 35, 'America/Denver', (exerciseId) => otherDevice.exercise(exerciseId)?.unit).today.reps;
+    expect(ringReps).toBe(8 + 10 + 2);
+    expect(db.dayTotals.get(USER_ID)!.get('2026-10-08')).toMatchObject({ reps: ringReps, sets: 5, holdSeconds: 90 });
+  });
+
+  it('renames a created exercise on one device and the other picks it up', async () => {
+    const deviceA = makeTracker(serverTransport(db)).tracker;
+    const deviceB = makeTracker(serverTransport(db)).tracker;
+    const stairs = deviceA.createExercise({ name: 'Stairs', measure: 'count', unit: 'lap' });
+    await deviceA.syncNow();
+    await deviceB.syncNow();
+    deviceA.editDefinition(deviceA.allDefinitions()[0]!, { name: 'Red Rocks stairs', description: 'Bottom to top' });
+    await deviceA.syncNow();
+    await deviceB.syncNow();
+    expect(deviceB.exercise(stairs.id)).toMatchObject({ name: 'Red Rocks stairs', description: 'Bottom to top' });
+  });
+
   it('never lets a device clock that went backwards lose an edit', () => {
     const { tracker, clock } = makeTracker(async () => EMPTY_RESPONSE);
     const entry = tracker.add(5);
@@ -230,5 +334,98 @@ describe('backoffMs', () => {
   it('doubles from 2s and caps at 5 minutes', () => {
     expect([1, 2, 3].map(backoffMs)).toEqual([2000, 4000, 8000]);
     expect(backoffMs(20)).toBe(300_000);
+  });
+});
+
+describe('Tracker profile', () => {
+  const serveProfile = (db: MemoryDb): ProfileTransport => async (patch) => {
+    await serveSync(db, { protocolVersion: 2, pushedEntries: [], sinceCursor: 0 });
+    const response = await route({ method: 'POST', path: '/api/profile', headers: { 'x-pullup-token': SERVER_TOKEN }, body: JSON.stringify(patch) }, { db });
+    if (response.status !== 200) throw new HttpError(response.status, (response.body as { error: string }).error);
+    return response.body as Account;
+  };
+  const makeProfileTracker = (db: MemoryDb, profileTransport: ProfileTransport, storage = new MemoryStorage()) => {
+    const clock = new Clock();
+    const tracker = new Tracker({ storage, transport: serverTransport(db), profileTransport, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, deviceTimeZone: 'America/Denver' });
+    tracker.updateSettings({ token: 'tok' });
+    return { tracker, clock, storage };
+  };
+
+  it('keeps the device goal until the account has one, so an existing ring doesn’t move', async () => {
+    const db = new MemoryDb();
+    const { tracker } = makeProfileTracker(db, serveProfile(db));
+    tracker.updateSettings({ goal: 42 });
+    await tracker.syncNow();
+    expect(tracker.account?.dailyGoalReps).toBeUndefined();
+    expect(tracker.goal()).toBe(42);
+  });
+
+  it('applies a goal, zone and name at once, sends them before the next sync, and every device agrees', async () => {
+    const db = new MemoryDb();
+    const { tracker, storage } = makeProfileTracker(db, serveProfile(db));
+    await tracker.syncNow();
+    tracker.updateProfile({ dailyGoalReps: 50, timeZone: 'Europe/London', name: 'Hay' });
+    expect([tracker.goal(), tracker.timeZone(), tracker.accountName()]).toEqual([50, 'Europe/London', 'Hay']);
+    expect(tracker.status).toBe('pending');
+    expect(new Tracker({ storage, transport: serverTransport(db) }).goal()).toBe(50);
+
+    await tracker.syncNow();
+    expect(tracker.pendingCount()).toBe(0);
+    expect(db.users.get(USER_ID)).toMatchObject({ dailyGoalReps: 50, timeZone: 'Europe/London', name: 'Hay' });
+    const otherDevice = makeProfileTracker(db, serveProfile(db)).tracker;
+    otherDevice.updateSettings({ goal: 20 });
+    await otherDevice.syncNow();
+    expect([otherDevice.goal(), otherDevice.timeZone(), otherDevice.accountName()]).toEqual([50, 'Europe/London', 'Hay']);
+  });
+
+  it('keeps an edit queued offline, and one made while its push was in flight', async () => {
+    const db = new MemoryDb();
+    let isOnline = false;
+    let release: (() => void) | null = null;
+    const { tracker } = makeProfileTracker(db, async (patch, token) => {
+      if (!isOnline) throw new TypeError('Failed to fetch');
+      if (release === null) await new Promise<void>((resolve) => (release = resolve));
+      return serveProfile(db)(patch, token);
+    });
+    tracker.updateProfile({ dailyGoalReps: 30 });
+    await tracker.syncNow();
+    expect(tracker.status).toBe('offline');
+    expect(tracker.goal()).toBe(30);
+
+    isOnline = true;
+    const inFlight = tracker.syncNow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    tracker.updateProfile({ dailyGoalReps: 31 });
+    release!();
+    await inFlight;
+    expect(tracker.goal()).toBe(31);
+    expect(tracker.pendingCount()).toBe(1);
+    await tracker.syncNow();
+    expect(tracker.pendingCount()).toBe(0);
+    expect(db.users.get(USER_ID)!.dailyGoalReps).toBe(31);
+  });
+
+  it('drops queued profile edits when the device switches accounts', () => {
+    const db = new MemoryDb();
+    const { tracker } = makeProfileTracker(db, serveProfile(db));
+    tracker.updateProfile({ name: 'Mine' });
+    tracker.signIn('other-token', { id: 'u2', name: 'Theirs' });
+    expect(tracker.accountName()).toBe('Theirs');
+    expect(tracker.pendingCount()).toBe(0);
+  });
+});
+
+describe('Tracker time zone', () => {
+  const db = new MemoryDb();
+  it('keeps days in the account’s zone, Denver for an account from before zones, and the device’s before joining', () => {
+    const storage = new MemoryStorage();
+    const clock = new Clock();
+    const tracker = new Tracker({ storage, transport: serverTransport(db), now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, deviceTimeZone: 'Asia/Kolkata' });
+    expect(tracker.timeZone()).toBe('Asia/Kolkata');
+    tracker.signIn('tok', { id: USER_ID, name: 'Me', timeZone: 'Europe/London' });
+    expect(tracker.timeZone()).toBe('Europe/London');
+    storage.setItem('pullups:v1', JSON.stringify({ version: 1, entries: [], outbox: [], cursor: 5, account: { id: USER_ID, name: 'Me' }, settings: { token: 'tok', goal: 35 }, lastSyncAt: null }));
+    const restored = new Tracker({ storage, transport: serverTransport(db), now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, deviceTimeZone: 'Asia/Kolkata' });
+    expect(restored.timeZone()).toBe('America/Denver');
   });
 });

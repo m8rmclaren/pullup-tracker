@@ -1,21 +1,34 @@
-// All calendar math happens in one fixed zone, regardless of where the device is.
-// Day keys are 'YYYY-MM-DD' strings; arithmetic on them is pure calendar math in
-// UTC so DST never shifts a day.
+// Day keys are 'YYYY-MM-DD' strings in a user's own IANA zone. Arithmetic on them is pure
+// calendar math in UTC, so DST never shifts a day.
 
-export const TIME_ZONE = 'America/Denver';
+/** The zone of every account made before zones were per user; their stored day keys are in it. */
+export const DEFAULT_TIME_ZONE = 'America/Denver';
 
 const DAY_MS = 86_400_000;
 
-const wallClockFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hourCycle: 'h23',
-});
+const formattersByZone = new Map<string, Intl.DateTimeFormat>();
+
+function wallClockFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = formattersByZone.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+    formattersByZone.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+export const MAX_TIME_ZONE_LENGTH = 64;
+
+/** True for an IANA zone name this runtime knows. */
+export function isValidTimeZone(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_TIME_ZONE_LENGTH) return false;
+  try {
+    wallClockFormatter(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface WallClock {
   year: number;
@@ -26,9 +39,9 @@ interface WallClock {
   second: number;
 }
 
-function denverWallClock(epochMs: number): WallClock {
+function wallClockAt(epochMs: number, timeZone: string): WallClock {
   const valuesByType: Record<string, number> = {};
-  for (const part of wallClockFormatter.formatToParts(epochMs)) {
+  for (const part of wallClockFormatter(timeZone).formatToParts(epochMs)) {
     if (part.type !== 'literal') valuesByType[part.type] = Number(part.value);
   }
   return {
@@ -43,42 +56,42 @@ function denverWallClock(epochMs: number): WallClock {
 
 const pad = (value: number, width = 2) => String(value).padStart(width, '0');
 
-export function dayKey(epochMs: number): string {
-  const wallClock = denverWallClock(epochMs);
+export function dayKey(epochMs: number, timeZone: string): string {
+  const wallClock = wallClockAt(epochMs, timeZone);
   return `${pad(wallClock.year, 4)}-${pad(wallClock.month)}-${pad(wallClock.day)}`;
 }
 
-export function monthKey(epochMs: number): string {
-  return dayKey(epochMs).slice(0, 7);
+export function monthKey(epochMs: number, timeZone: string): string {
+  return dayKey(epochMs, timeZone).slice(0, 7);
 }
 
-/** Denver wall-clock time minus UTC, in ms (e.g. -6h in summer, -7h in winter). */
-export function denverOffsetMs(epochMs: number): number {
-  const wallClock = denverWallClock(epochMs);
+/** Wall-clock time in `timeZone` minus UTC, in ms (e.g. -6h for Denver in summer). */
+export function zoneOffsetMs(epochMs: number, timeZone: string): number {
+  const wallClock = wallClockAt(epochMs, timeZone);
   const asUtc = Date.UTC(wallClock.year, wallClock.month - 1, wallClock.day, wallClock.hour, wallClock.minute, wallClock.second);
   return asUtc - Math.floor(epochMs / 1000) * 1000;
 }
 
 /**
- * Epoch ms for a Denver wall-clock time. A time skipped by spring-forward resolves
+ * Epoch ms for a wall-clock time in `timeZone`. A time skipped by spring-forward resolves
  * an hour later (2:30 → 3:30), as clocks do; an ambiguous fall-back time resolves to the
  * first (daylight) occurrence.
  */
-export function wallClockToEpochMs(day: string, hhmm: string): number {
+export function wallClockToEpochMs(day: string, hhmm: string, timeZone: string): number {
   const [year, month, dayOfMonth] = day.split('-').map(Number) as [number, number, number];
   const [hour, minute] = hhmm.split(':').map(Number) as [number, number];
   const naiveUtcMs = Date.UTC(year, month - 1, dayOfMonth, hour, minute);
-  const viaEarlierOffset = naiveUtcMs - denverOffsetMs(naiveUtcMs - 12 * 3_600_000);
-  const viaLaterOffset = naiveUtcMs - denverOffsetMs(naiveUtcMs + 12 * 3_600_000);
+  const viaEarlierOffset = naiveUtcMs - zoneOffsetMs(naiveUtcMs - 12 * 3_600_000, timeZone);
+  const viaLaterOffset = naiveUtcMs - zoneOffsetMs(naiveUtcMs + 12 * 3_600_000, timeZone);
   for (const candidate of [viaEarlierOffset, viaLaterOffset].sort((a, b) => a - b)) {
-    const wallClock = denverWallClock(candidate);
-    if (wallClock.hour === hour && wallClock.minute === minute && dayKey(candidate) === day) return candidate;
+    const wallClock = wallClockAt(candidate, timeZone);
+    if (wallClock.hour === hour && wallClock.minute === minute && dayKey(candidate, timeZone) === day) return candidate;
   }
   return Math.max(viaEarlierOffset, viaLaterOffset);
 }
 
-export function timeOfDay(epochMs: number): string {
-  const wallClock = denverWallClock(epochMs);
+export function timeOfDay(epochMs: number, timeZone: string): string {
+  const wallClock = wallClockAt(epochMs, timeZone);
   return `${pad(wallClock.hour)}:${pad(wallClock.minute)}`;
 }
 
@@ -110,9 +123,9 @@ export function startOfWeek(day: string): string {
   return addDays(day, -weekdayIndexFromMonday(day));
 }
 
-/** Ms until the next Denver midnight after `epochMs`. */
-export function msUntilNextDay(epochMs: number): number {
-  const nextMidnightMs = wallClockToEpochMs(addDays(dayKey(epochMs), 1), '00:00');
+/** Ms until the next midnight in `timeZone` after `epochMs`. */
+export function msUntilNextDay(epochMs: number, timeZone: string): number {
+  const nextMidnightMs = wallClockToEpochMs(addDays(dayKey(epochMs, timeZone), 1), '00:00', timeZone);
   return Math.max(1000, nextMidnightMs - epochMs);
 }
 
@@ -127,8 +140,8 @@ export function formatDay(day: string, options: { weekday?: boolean; year?: bool
   return label;
 }
 
-export function formatClock(epochMs: number): string {
-  const wallClock = denverWallClock(epochMs);
+export function formatClock(epochMs: number, timeZone: string): string {
+  const wallClock = wallClockAt(epochMs, timeZone);
   const hour12 = wallClock.hour % 12 === 0 ? 12 : wallClock.hour % 12;
   return `${hour12}:${pad(wallClock.minute)}${wallClock.hour < 12 ? 'a' : 'p'}`;
 }
