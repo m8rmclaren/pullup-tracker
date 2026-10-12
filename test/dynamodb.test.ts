@@ -4,11 +4,12 @@
 //   DYNAMODB_ENDPOINT=http://localhost:8000 npm test
 import { CreateTableCommand, DeleteTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { redeemInvite } from '../src/lambda/accounts';
 import { hashToken } from '../src/lambda/auth';
 import { PreconditionFailed } from '../src/lambda/db';
 import { DynamoDb } from '../src/lambda/dynamodb';
+import { updateProfile } from '../src/lambda/profile';
 import { syncEntries } from '../src/lambda/sync';
 import type { Entry } from '../src/shared/model';
 import { exerciseDayTotals } from '../src/shared/stats';
@@ -145,6 +146,31 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     const legacy = await db.getDayTotal('t5', '2026-10-07');
     expect(legacy).toEqual({ day: '2026-10-07', reps: 41, sets: 7, bestSetReps: 8, version: 9 });
     expect(exerciseDayTotals(legacy!)).toEqual({ 'pull-up': { sets: 7, reps: 41, bestSetReps: 8 } });
+  });
+
+  it('edits a profile only from the version read, starting from a pre-v2 profile with none', async () => {
+    // As the one production profile is: no version, zone, goal or clocks.
+    await documentClient.send(new PutCommand({ TableName: tableName, Item: { pk: 'U#p1', sk: 'P', id: 'p1', name: 'Hayden', createdAt: 1 } }));
+    expect(await db.getUser('p1')).toEqual({ id: 'p1', name: 'Hayden', createdAt: 1 });
+    await expect(db.putProfile({ id: 'p1', name: 'Hay', createdAt: 1, version: 1 }, 1)).rejects.toBeInstanceOf(PreconditionFailed);
+    await expect(db.putProfile({ id: 'nobody', name: 'X', createdAt: 1, version: 1 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
+    const edited = { id: 'p1', name: 'Hay', nameUpdatedAt: 5, createdAt: 1, timeZone: 'Europe/London', zoneUpdatedAt: 6, dailyGoalReps: 40, goalUpdatedAt: 7, version: 1 };
+    await db.putProfile(edited, null);
+    await expect(db.putProfile({ ...edited, version: 2 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.getUser('p1')).toEqual(edited);
+  });
+
+  it('re-keys recent day totals on a zone change, through the real indexes', async () => {
+    await documentClient.send(new PutCommand({ TableName: tableName, Item: { pk: 'U#z1', sk: 'P', id: 'z1', name: 'Zed', createdAt: 1 } }));
+    const now = { now: () => Date.parse('2026-10-08T18:00:00Z') };
+    await syncEntries(db, 'z1', 'America/Denver', [makeEntry(Date.parse('2026-10-08T03:00:00Z'), 5), makeEntry(Date.parse('2026-10-07T15:00:00Z'), 6)], 0, now);
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await updateProfile(db, 'z1', { timeZone: 'Europe/London', zoneUpdatedAt: 10 }, now);
+    logs.mockRestore();
+    expect(await db.getDayTotal('z1', '2026-10-07')).toMatchObject({ reps: 6, sets: 1 });
+    expect(await db.getDayTotal('z1', '2026-10-08')).toMatchObject({ reps: 5, sets: 1 });
+    expect(await db.getDayTotal('z1', '2026-10-01')).toBeNull();
+    expect(await db.getUser('z1')).toMatchObject({ timeZone: 'Europe/London', version: 1 });
   });
 
   it('redeems an invite exactly once, even when raced', async () => {

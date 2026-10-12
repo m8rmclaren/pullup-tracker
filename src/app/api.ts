@@ -1,5 +1,6 @@
-import type { InviteKind, InviteResponse, JoinRequest, JoinResponse, SyncRequest, SyncResponse } from '../shared/model';
-import { HttpError, type Transport } from './tracker';
+import type { Account, InviteKind, InviteResponse, JoinRequest, JoinResponse, SyncRequest, SyncResponse } from '../shared/model';
+import type { ProfilePatch } from '../shared/profile';
+import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
 const TIMEOUT_MS = 15_000;
 
@@ -38,6 +39,8 @@ async function post<T>(path: string, payload: unknown, token?: string): Promise<
 }
 
 export const fetchTransport: Transport = (request: SyncRequest, token: string) => post<SyncResponse>('/api/sync', request, token);
+
+export const profileTransport: ProfileTransport = (patch: ProfilePatch, token: string) => post<Account>('/api/profile', patch, token);
 
 export const join = (request: JoinRequest) => post<JoinResponse>('/api/join', request);
 

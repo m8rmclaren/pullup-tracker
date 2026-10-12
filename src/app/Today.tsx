@@ -27,7 +27,7 @@ interface TodayProps {
 export function Today({ tracker, stats, now, timeZone, usualSetReps, onLogged, onEdit, onOpenCustomEntry, onOpenSettings, onOpenPadWeight }: TodayProps) {
   const lastTapAtMs = useRef(0);
   const [pressedReps, setPressedReps] = useState<number | null>(null);
-  const goal = tracker.settings.goal;
+  const goal = tracker.goal();
   const today = dayKey(now, timeZone);
   const todaysSets = tracker
     .allEntries()

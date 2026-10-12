@@ -4,7 +4,8 @@ import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyStri
 import { type Db, type StoredDayTotal, type Invite, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
-//   U#<userId>  P           profile: id, name, createdAt, timeZone? (absent means America/Denver)
+//   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
+//                           dailyGoalReps/goalUpdatedAt (timeZone absent means America/Denver)
 //   U#<userId>  E#<id>      entry: Entry fields (exerciseId?, variationIds? as a list, reps or holdSeconds, …) + serverWrittenAt
 //                           (LSIs `by-server-written-at` and `by-done-at` index these)
 //   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, holdSeconds, byExercise (map), version, userId;
@@ -191,8 +192,19 @@ export class DynamoDb implements Db {
     const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'P' }, ConsistentRead: true }));
     if (!response.Item) return null;
     const user: User = { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number };
-    if (response.Item.timeZone) user.timeZone = response.Item.timeZone as string;
+    for (const field of ['nameUpdatedAt', 'timeZone', 'zoneUpdatedAt', 'dailyGoalReps', 'goalUpdatedAt', 'version'] as const) {
+      if (response.Item[field] !== undefined) (user as unknown as Record<string, unknown>)[field] = response.Item[field];
+    }
     return user;
+  }
+
+  // A put replaces the whole item (the API role may not UpdateItem), so every profile attribute must be a field of User.
+  async putProfile(user: User, expectedVersion: number | null) {
+    const condition =
+      expectedVersion === null
+        ? { ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(#version)', ExpressionAttributeNames: { '#version': 'version' } }
+        : { ConditionExpression: '#version = :expected', ExpressionAttributeNames: { '#version': 'version' }, ExpressionAttributeValues: { ':expected': expectedVersion } };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { pk: userPartitionKey(user.id), sk: 'P', ...user }, ...condition })));
   }
 
   async userIdForToken(tokenHash: string) {

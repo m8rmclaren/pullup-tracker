@@ -39,5 +39,15 @@
     {"name": "same tick: the greater name wins", "a": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "b": {"id": "x-k3p7abcdefgh2345", "name": "Red Rocks stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "winner": "a"},
     {"name": "same tick and name: the greater description wins, absent compares as empty", "a": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000}, "b": {"id": "x-k3p7abcdefgh2345", "name": "Stairs", "measure": "count", "unit": "lap", "createdAt": 1000, "updatedAt": 2000, "description": "Bottom to top"}, "winner": "b"},
     {"name": "variations: the newer updatedAt wins", "a": {"id": "v-6qzrabcdefgh2345", "exerciseId": "muscle-up", "name": "Into tuck", "createdAt": 1000, "updatedAt": 3000}, "b": {"id": "v-6qzrabcdefgh2345", "exerciseId": "muscle-up", "name": "Tuck exit", "createdAt": 1000, "updatedAt": 2000}, "winner": "a"}
+  ],
+  "profiles": [
+    {"name": "a field set at sign-up (no clock) loses to any edit", "stored": {"name": "Hayden"}, "patch": {"name": "Hay", "nameUpdatedAt": 1}, "merged": {"name": "Hay", "nameUpdatedAt": 1}},
+    {"name": "an older edit loses", "stored": {"name": "Hay", "nameUpdatedAt": 50}, "patch": {"name": "Old", "nameUpdatedAt": 40}, "merged": {"name": "Hay", "nameUpdatedAt": 50}},
+    {"name": "each field has its own clock: an older name and a newer goal in one patch", "stored": {"name": "Hay", "nameUpdatedAt": 50, "dailyGoalReps": 35, "goalUpdatedAt": 10}, "patch": {"name": "Old", "nameUpdatedAt": 40, "dailyGoalReps": 50, "goalUpdatedAt": 60}, "merged": {"name": "Hay", "nameUpdatedAt": 50, "dailyGoalReps": 50, "goalUpdatedAt": 60}},
+    {"name": "a first goal and zone on a v1 profile", "stored": {"name": "Hayden"}, "patch": {"dailyGoalReps": 40, "goalUpdatedAt": 5, "timeZone": "Europe/London", "zoneUpdatedAt": 5}, "merged": {"name": "Hayden", "dailyGoalReps": 40, "goalUpdatedAt": 5, "timeZone": "Europe/London", "zoneUpdatedAt": 5}},
+    {"name": "same tick: the greater value wins, in either order", "stored": {"name": "Hayden", "dailyGoalReps": 40, "goalUpdatedAt": 5}, "patch": {"dailyGoalReps": 45, "goalUpdatedAt": 5}, "merged": {"name": "Hayden", "dailyGoalReps": 45, "goalUpdatedAt": 5}},
+    {"name": "same tick: the lesser value loses", "stored": {"name": "Hayden", "dailyGoalReps": 45, "goalUpdatedAt": 5}, "patch": {"dailyGoalReps": 40, "goalUpdatedAt": 5}, "merged": {"name": "Hayden", "dailyGoalReps": 45, "goalUpdatedAt": 5}},
+    {"name": "a zone set at sign-up (no clock) loses to any edit", "stored": {"name": "Ana", "timeZone": "Europe/London"}, "patch": {"timeZone": "America/Denver", "zoneUpdatedAt": 1}, "merged": {"name": "Ana", "timeZone": "America/Denver", "zoneUpdatedAt": 1}},
+    {"name": "an empty patch changes nothing", "stored": {"name": "Ana", "timeZone": "Europe/London", "zoneUpdatedAt": 3}, "patch": {}, "merged": {"name": "Ana", "timeZone": "Europe/London", "zoneUpdatedAt": 3}}
   ]
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type Entry, clampAddedWeight, isValidEntry, mergeInto, mergeLists, normalizeEntry, pickWinner } from '../src/shared/model';
 import { type Definition, isValidDefinition, mergeDefinitionsInto, pickDefinitionWinner } from '../src/shared/definitions';
+import { type ProfileFields, type ProfilePatch, isValidProfilePatch, mergeProfile } from '../src/shared/profile';
 import { loadFixture } from './fixtures';
 
 interface MergeFixture {
@@ -8,11 +9,13 @@ interface MergeFixture {
   replicas: { name: string; replicas: Entry[][]; merged: Entry[] }[];
   normalize: { name: string; entry: Entry; normalized: Entry }[];
   definitionWinners: { name: string; a: Definition; b: Definition; winner: 'a' | 'b' }[];
+  profiles: { name: string; stored: ProfileFields; patch: ProfilePatch; merged: ProfileFields }[];
 }
 
 interface ValidationFixture {
   entries: { name: string; entry: unknown; valid: boolean }[];
   definitions: { name: string; definition: unknown; valid: boolean }[];
+  profilePatches: { name: string; patch: unknown; valid: boolean }[];
 }
 
 const mergeFixture = loadFixture<MergeFixture>('merge.json');
@@ -50,6 +53,10 @@ describe('merge.json', () => {
     expect(pickDefinitionWinner(a, b)).toBe(expected);
     expect(pickDefinitionWinner(b, a)).toBe(expected);
   });
+
+  it.each(mergeFixture.profiles)('mergeProfile: $name', ({ stored, patch, merged: expected }) => {
+    expect(mergeProfile(stored, patch)).toEqual(expected);
+  });
 });
 
 describe('validation.json', () => {
@@ -59,6 +66,10 @@ describe('validation.json', () => {
 
   it.each(validationFixture.definitions)('isValidDefinition: $name → $valid', ({ definition, valid }) => {
     expect(isValidDefinition(definition)).toBe(valid);
+  });
+
+  it.each(validationFixture.profilePatches)('isValidProfilePatch: $name → $valid', ({ patch, valid }) => {
+    expect(isValidProfilePatch(patch)).toBe(valid);
   });
 });
 

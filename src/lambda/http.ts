@@ -1,8 +1,9 @@
 import { type Entry, type InviteRequest, MAX_PUSHED_ENTRIES, PROTOCOL_VERSION, isValidEntry } from '../shared/model';
-import { DEFAULT_TIME_ZONE } from '../shared/time';
+import { isValidProfilePatch } from '../shared/profile';
 import { type Definition, MAX_PUSHED_DEFINITIONS, isValidDefinition } from '../shared/definitions';
 import { createInvite, redeemInvite } from './accounts';
 import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
+import { accountOf, updateProfile } from './profile';
 import { hashToken, isPlausibleSecret } from './auth';
 import type { Db } from './db';
 import { type Clock, syncEntries } from './sync';
@@ -42,6 +43,13 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
       const kind = (body as Partial<InviteRequest>).kind;
       if (kind !== 'friend' && kind !== 'device') return errorResponse(400, 'kind must be friend or device');
       return { status: 200, body: await createInvite(deps.db, userId, kind, clockFrom(deps)) };
+    },
+    '/api/profile': async (body) => {
+      const userId = await authenticate(request, deps);
+      if (!userId) return errorResponse(401, 'This device is signed out.');
+      if (!isValidProfilePatch(body)) return errorResponse(400, 'Each of name, timeZone and dailyGoalReps needs its updatedAt clock, and a valid value.');
+      const user = await updateProfile(deps.db, userId, body, clockFrom(deps));
+      return user ? { status: 200, body: accountOf(user) } : errorResponse(401, 'This account no longer exists.');
     },
     '/api/join': async (body) => {
       if (!isPlausibleSecret(body.code)) return errorResponse(400, 'That is not an invite link.');
@@ -83,7 +91,8 @@ async function sync(userId: string, body: Record<string, unknown>, deps: RouteDe
   if (!Number.isSafeInteger(sinceCursor) || (sinceCursor as number) < 0) return errorResponse(400, 'sinceCursor must be a non-negative integer');
   const user = await deps.db.getUser(userId);
   if (!user) return errorResponse(401, 'This account no longer exists.');
-  const timeZone = user.timeZone ?? DEFAULT_TIME_ZONE;
+  const account = accountOf(user);
+  const timeZone = account.timeZone!;
   const clock = clockFrom(deps);
 
   await mergePushedDefinitions(deps.db, userId, pushedDefinitions as Definition[], clock);
@@ -91,5 +100,5 @@ async function sync(userId: string, body: Record<string, unknown>, deps: RouteDe
   if (mismatched) return errorResponse(400, `entry ${mismatched.id} doesn't match its exercise's measure`);
   const synced = await syncEntries(deps.db, userId, timeZone, pushedEntries as Entry[], sinceCursor as number, clock);
   const definitions = await definitionsForSync(deps.db, userId, pushedEntries as Entry[], synced.entries, clock);
-  return { status: 200, body: { ...synced, definitions, account: { id: user.id, name: user.name, timeZone } } };
+  return { status: 200, body: { ...synced, definitions, account } };
 }
