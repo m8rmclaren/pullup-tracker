@@ -4,7 +4,7 @@ import { type Entry, type PasskeySummary, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS
 import { MIN_DAILY_GOAL_REPS } from '../shared/profile';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallClockToEpochMs } from '../shared/time';
-import { addPasskey, createDeviceLink, deviceLink, isPasskeySupported, listPasskeys, parseDeviceLink, passkeyErrorMessage, redeemDeviceLink, signInWithPasskey, signUpWithPasskey } from './api';
+import { addPasskey, createDeviceLink, deviceLink, isPasskeySupported, listPasskeys, parseDeviceLink, parseJoinLink, passkeyErrorMessage, redeemDeviceLink, signInWithPasskey, signUpWithPasskey } from './api';
 import { exerciseLabel, formatAmount, formatHoldSeconds, unitLookup } from './labels';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
@@ -264,6 +264,16 @@ const STATUS_TEXT: Record<Tracker['status'], string> = {
   unconfigured: 'Not signed in — sets stay on this device',
 };
 
+/** A link pasted into Settings: an iPhone home-screen app never sees links opened in Safari. */
+export type PastedLink = { kind: 'device' | 'link'; code: string };
+
+function readPastedLink(text: string): PastedLink | null {
+  const deviceCode = parseDeviceLink(text);
+  if (deviceCode) return { kind: 'device', code: deviceCode };
+  const joinCode = parseJoinLink(text);
+  return joinCode ? { kind: 'link', code: joinCode } : null;
+}
+
 /** Signs this device into the account a device link belongs to. */
 export function DeviceLinkSheet({ tracker, code, onClose }: { tracker: Tracker; code: string; onClose: () => void }) {
   const [isBusy, setIsBusy] = useState(false);
@@ -302,7 +312,7 @@ export function DeviceLinkSheet({ tracker, code, onClose }: { tracker: Tracker; 
 }
 
 /** Signed out: make an account with a name and a passkey, or sign in with one. */
-function SignedOutSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onOpenDeviceLink: (code: string) => void }) {
+function SignedOutSection({ tracker, onOpenLink }: { tracker: Tracker; onOpenLink: (link: PastedLink) => void }) {
   const [name, setName] = useState('');
   const [pastedLink, setPastedLink] = useState('');
   const [busyAction, setBusyAction] = useState<'signup' | 'signin' | null>(null);
@@ -322,9 +332,9 @@ function SignedOutSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onO
     setBusyAction(null);
   };
   const openPastedLink = () => {
-    const code = parseDeviceLink(pastedLink);
-    if (code) onOpenDeviceLink(code);
-    else setNote("That doesn't look like a device link.");
+    const link = readPastedLink(pastedLink);
+    if (link) onOpenLink(link);
+    else setNote("That doesn't look like a link from this app.");
   };
 
   return (
@@ -356,7 +366,7 @@ function SignedOutSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onO
         <p class="muted small">This browser can't use passkeys. Open a device link from another of your devices to sign in here.</p>
       )}
       <label class="field">
-        <span>Or paste a device link</span>
+        <span>Or paste a link</span>
         <div class="token-row">
           <input type="text" autocomplete="off" autocapitalize="off" spellcheck={false} value={pastedLink} onInput={(event) => setPastedLink((event.target as HTMLInputElement).value)} />
           <button type="button" class="btn-text" onClick={openPastedLink} disabled={!pastedLink.trim()}>
@@ -369,7 +379,7 @@ function SignedOutSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onO
   );
 }
 
-function SignedInSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onOpenDeviceLink: (code: string) => void }) {
+function SignedInSection({ tracker, onOpenLink }: { tracker: Tracker; onOpenLink: (link: PastedLink) => void }) {
   const token = tracker.settings.token;
   const [passkeys, setPasskeys] = useState<PasskeySummary[] | null>(null);
   const [createdLink, setCreatedLink] = useState<string | null>(null);
@@ -414,9 +424,9 @@ function SignedInSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onOp
     } catch {}
   };
   const openPastedLink = () => {
-    const code = parseDeviceLink(pastedLink);
-    if (code) onOpenDeviceLink(code);
-    else setNote("That doesn't look like a device link.");
+    const link = readPastedLink(pastedLink);
+    if (link) onOpenLink(link);
+    else setNote("That doesn't look like a link from this app.");
   };
 
   return (
@@ -462,7 +472,7 @@ function SignedInSection({ tracker, onOpenDeviceLink }: { tracker: Tracker; onOp
         </>
       ) : null}
       <label class="field">
-        <span>Have a device link for another account?</span>
+        <span>Paste a friend, challenge or device link</span>
         <div class="token-row">
           <input type="text" autocomplete="off" autocapitalize="off" spellcheck={false} value={pastedLink} onInput={(event) => setPastedLink((event.target as HTMLInputElement).value)} />
           <button type="button" class="btn-text" onClick={openPastedLink} disabled={!pastedLink.trim()}>
@@ -540,7 +550,7 @@ async function reloadIntoLatestVersion(): Promise<void> {
   location.reload();
 }
 
-export function SettingsSheet({ tracker, onClose, onOpenDeviceLink }: { tracker: Tracker; onClose: () => void; onOpenDeviceLink: (code: string) => void }) {
+export function SettingsSheet({ tracker, onClose, onOpenLink }: { tracker: Tracker; onClose: () => void; onOpenLink: (link: PastedLink) => void }) {
   const [dataMessage, setDataMessage] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -603,7 +613,7 @@ export function SettingsSheet({ tracker, onClose, onOpenDeviceLink }: { tracker:
 
       <section class="settings-sec">
         <h3>Account</h3>
-        {tracker.settings.token ? <SignedInSection tracker={tracker} onOpenDeviceLink={onOpenDeviceLink} /> : <SignedOutSection tracker={tracker} onOpenDeviceLink={onOpenDeviceLink} />}
+        {tracker.settings.token ? <SignedInSection tracker={tracker} onOpenLink={onOpenLink} /> : <SignedOutSection tracker={tracker} onOpenLink={onOpenLink} />}
       </section>
 
       {tracker.settings.token ? (

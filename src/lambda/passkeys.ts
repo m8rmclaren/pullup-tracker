@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { type AuthenticationResponseJSON, type RegistrationResponseJSON, generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
-import { type PasskeySummary, type SessionResponse, cleanName } from '../shared/model';
+import { type PasskeySummary, type SessionResponse, type SignupResponse, cleanName } from '../shared/model';
 import { DEFAULT_TIME_ZONE, addDays, dayKey, isValidTimeZone } from '../shared/time';
-import { hashToken, newSecret, newUserId } from './auth';
-import { type ChallengePurpose, type Db, type Passkey, type PendingChallenge, PreconditionFailed } from './db';
+import { hashToken, isPlausibleSecret, newSecret, newUserId } from './auth';
+import { type ChallengePurpose, type Db, type NewAccount, type Passkey, type PendingChallenge, type User, PreconditionFailed } from './db';
+import { bumpLinkCounter, liveLink } from './links';
 import { RequestError } from './errors';
 import { accountOf } from './profile';
 import type { Clock } from './sync';
@@ -95,25 +96,42 @@ function registrationOptions(config: WebAuthnConfig, userId: string, name: strin
   });
 }
 
-/** The first half of sign-up: holds the name and zone with a fresh user id until the passkey exists. */
+/** The first half of sign-up: holds the name, zone and any link with a fresh user id until the passkey exists. */
 export async function startSignup(db: Db, config: WebAuthnConfig, body: Record<string, unknown>, clock: Clock) {
   const name = cleanName(body.name);
   if (!name) throw new RequestError(400, 'Pick a name of 1 to 24 characters.');
   const timeZone = body.timeZone ?? DEFAULT_TIME_ZONE;
   if (!isValidTimeZone(timeZone)) throw new RequestError(400, 'timeZone must be an IANA time zone name.');
+  let linkCodeHash: string | undefined;
+  if (body.linkCode !== undefined) {
+    if (!isPlausibleSecret(body.linkCode) || !(await liveLink(db, hashToken(body.linkCode), clock))) throw new RequestError(404, 'This link has expired or was replaced.');
+    linkCodeHash = hashToken(body.linkCode);
+  }
   const userId = newUserId();
-  const challenge = await issueChallenge(db, { purpose: 'signup', userId, name, timeZone }, clock);
+  const challenge = await issueChallenge(db, { purpose: 'signup', userId, name, timeZone, ...(linkCodeHash ? { linkCodeHash } : {}) }, clock);
   return registrationOptions(config, userId, name, challenge);
 }
 
-/** Verifies the new passkey, then writes the account, the passkey and this device's token together. */
-export async function finishSignup(db: Db, config: WebAuthnConfig, body: Record<string, unknown>, clock: Clock): Promise<SessionResponse> {
+/**
+ * Verifies the new passkey, then writes the account, the passkey and this device's token
+ * together, with the friendship when it came through a link. A link that died in the
+ * meantime doesn't stop the sign-up; the account is just made without it.
+ */
+export async function finishSignup(db: Db, config: WebAuthnConfig, body: Record<string, unknown>, clock: Clock): Promise<SignupResponse> {
   const { credential, challenge, pending } = await takeChallengeFor(db, body.credential, 'signup', clock);
   const passkey = await verifyNewPasskey(config, credential, challenge, body.label, clock);
-  const user = { id: pending.userId!, name: pending.name!, createdAt: clock.now(), timeZone: pending.timeZone! };
+  const user: User = { id: pending.userId!, name: pending.name!, createdAt: clock.now(), timeZone: pending.timeZone! };
   const token = newSecret();
-  await db.createAccount({ user, passkey, tokenHash: hashToken(token), sweepDay: addDays(dayKey(clock.now(), 'UTC'), EMPTY_ACCOUNT_SWEEP_DAYS) });
-  return { token, account: accountOf(user) };
+  const account: NewAccount = { user, passkey, tokenHash: hashToken(token), sweepDay: addDays(dayKey(clock.now(), 'UTC'), EMPTY_ACCOUNT_SWEEP_DAYS) };
+  const viaLink = pending.linkCodeHash ? await liveLink(db, pending.linkCodeHash, clock) : null;
+  if (viaLink) {
+    user.joinedVia = { kind: viaLink.link.kind, linkCreatedBy: viaLink.creator.id };
+    account.friendId = viaLink.creator.id;
+  }
+  await db.createAccount(account);
+  if (!viaLink) return { token, account: accountOf(user) };
+  await bumpLinkCounter(db, pending.linkCodeHash!, 'joinCount');
+  return { token, account: accountOf(user), redeemed: { kind: viaLink.link.kind, friend: { id: viaLink.creator.id, name: viaLink.creator.name } } };
 }
 
 /** No allowCredentials: the device offers whichever passkey it has for the domain, so there's no username to type. */

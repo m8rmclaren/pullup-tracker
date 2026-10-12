@@ -1,7 +1,7 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, type BatchGetCommandOutput, DeleteCommand, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
-import { type Db, type Invite, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type Db, type FriendLink, type Invite, type Link, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
@@ -15,7 +15,12 @@ import { type Db, type Invite, type NewAccount, type Passkey, type PendingChalle
 //                           (tokens issued before passkeys have no such item)
 //   U#<userId>  K#<credId>  passkey: credentialId, publicKey (COSE, base64url), counter, transports?, createdAt, label?
 //   U#<userId>  A#<key>     adopted definition (key is definitionKeyString: `x-…` or `<exerciseId>/v-…`): adoptedAt
-//   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
+//   U#<userId>  L           the user's friend link: code (readable, so every device can show it), codeHash
+//   U#<userId>  F#<friendId> friendship, written on both sides in one transaction: createdAt
+//   I#<hash>    I           device link: kind 'device', userId, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
+//                           or shared link: kind 'friend' | 'challenge', createdBy, createdAt, openCount, joinCount, version,
+//                           challengeId?, expiresAt?/ttlEpochSeconds? (challenge links). A friend invite from before passkeys
+//                           has kind 'friend' and expiresAt but no openCount, and is neither.
 //   C#<hash>    C           pending WebAuthn challenge: purpose, userId?, name?, timeZone?, expiresAt, ttlEpochSeconds
 //   W#<day>     U#<userId>  the empty-account sweep looks at this account on <day>
 //   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
@@ -28,6 +33,8 @@ const DAY_SK_PREFIX = 'D#';
 const ADOPTED_SK_PREFIX = 'A#';
 const PASSKEY_SK_PREFIX = 'K#';
 const TOKEN_SK_PREFIX = 'T#';
+const FRIEND_SK_PREFIX = 'F#';
+const linkKey = (codeHash: string) => ({ pk: `I#${codeHash}`, sk: 'I' });
 
 type TransactItems = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']>;
 
@@ -84,7 +91,21 @@ function versionCondition(attributeName: string, expectedValue: number | null) {
 }
 
 // Every optional attribute of the profile item. putProfile replaces the whole item, so one missing here would be erased by the next edit.
-const USER_OPTIONAL_FIELDS = ['nameUpdatedAt', 'timeZone', 'zoneUpdatedAt', 'dailyGoalReps', 'goalUpdatedAt', 'version'] as const;
+const USER_OPTIONAL_FIELDS = ['nameUpdatedAt', 'timeZone', 'zoneUpdatedAt', 'dailyGoalReps', 'goalUpdatedAt', 'version', 'joinedVia'] as const;
+
+function itemToUser(item: Record<string, unknown>): User {
+  const user: User = { id: item.id as string, name: item.name as string, createdAt: item.createdAt as number };
+  for (const field of USER_OPTIONAL_FIELDS) if (item[field] !== undefined) (user as unknown as Record<string, unknown>)[field] = item[field];
+  return user;
+}
+
+function itemToLink(item: Record<string, unknown>): Link | null {
+  if ((item.kind !== 'friend' && item.kind !== 'challenge') || item.openCount === undefined) return null;
+  const link: Link = { kind: item.kind, createdBy: item.createdBy as string, createdAt: item.createdAt as number, openCount: item.openCount as number, joinCount: item.joinCount as number, version: item.version as number };
+  if (item.challengeId) link.challengeId = item.challengeId as string;
+  if (item.expiresAt !== undefined) link.expiresAt = item.expiresAt as number;
+  return link;
+}
 
 export class DynamoDb implements Db {
   constructor(
@@ -105,6 +126,27 @@ export class DynamoDb implements Db {
       }
     }
     return items;
+  }
+
+  /** Every item a query matches, strongly consistent, across pages. */
+  private async queryAll(input: Omit<QueryCommandInput, 'TableName' | 'ConsistentRead' | 'ExclusiveStartKey'>): Promise<Record<string, unknown>[]> {
+    const items: Record<string, unknown>[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const response: QueryCommandOutput = await this.documentClient.send(new QueryCommand({ TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey: exclusiveStartKey, ...input }));
+      items.push(...(response.Items ?? []));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return items;
+  }
+
+  /** A user's items whose sort key starts with `prefix`. */
+  private queryUserItems(userId: string, prefix: string, projection?: string) {
+    return this.queryAll({
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': prefix },
+      ...(projection ? { ProjectionExpression: projection } : {}),
+    });
   }
 
   async getEntries(userId: string, ids: string[]) {
@@ -143,23 +185,7 @@ export class DynamoDb implements Db {
   }
 
   async adoptedDefinitionKeys(userId: string) {
-    const keys: DefinitionKey[] = [];
-    let exclusiveStartKey: Record<string, unknown> | undefined;
-    do {
-      const response: QueryCommandOutput = await this.documentClient.send(
-        new QueryCommand({
-          TableName: this.tableName,
-          ConsistentRead: true,
-          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
-          ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': ADOPTED_SK_PREFIX },
-          ProjectionExpression: 'sk',
-          ExclusiveStartKey: exclusiveStartKey,
-        }),
-      );
-      for (const item of response.Items ?? []) keys.push(parseDefinitionKeyString((item.sk as string).slice(ADOPTED_SK_PREFIX.length)));
-      exclusiveStartKey = response.LastEvaluatedKey;
-    } while (exclusiveStartKey);
-    return keys;
+    return (await this.queryUserItems(userId, ADOPTED_SK_PREFIX, 'sk')).map((item) => parseDefinitionKeyString((item.sk as string).slice(ADOPTED_SK_PREFIX.length)));
   }
 
   async adoptDefinition(userId: string, key: DefinitionKey, adoptedAt: number) {
@@ -187,14 +213,7 @@ export class DynamoDb implements Db {
   }
 
   private async queryEntries(input: Omit<QueryCommandInput, 'TableName'>): Promise<StoredEntry[]> {
-    const entries: StoredEntry[] = [];
-    let exclusiveStartKey: Record<string, unknown> | undefined;
-    do {
-      const response: QueryCommandOutput = await this.documentClient.send(new QueryCommand({ TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey: exclusiveStartKey, ...input }));
-      for (const item of response.Items ?? []) entries.push(itemToEntry(item));
-      exclusiveStartKey = response.LastEvaluatedKey;
-    } while (exclusiveStartKey);
-    return entries;
+    return (await this.queryAll(input)).map(itemToEntry);
   }
 
   async getDayTotal(userId: string, day: string) {
@@ -209,12 +228,12 @@ export class DynamoDb implements Db {
 
   async getUser(userId: string) {
     const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'P' }, ConsistentRead: true }));
-    if (!response.Item) return null;
-    const user: User = { id: response.Item.id as string, name: response.Item.name as string, createdAt: response.Item.createdAt as number };
-    for (const field of USER_OPTIONAL_FIELDS) {
-      if (response.Item[field] !== undefined) (user as unknown as Record<string, unknown>)[field] = response.Item[field];
-    }
-    return user;
+    return response.Item ? itemToUser(response.Item) : null;
+  }
+
+  async getUsers(userIds: string[]) {
+    const items = await this.batchGetItems([...new Set(userIds)].map((userId) => ({ pk: userPartitionKey(userId), sk: 'P' })));
+    return new Map(items.map((item) => [item.id as string, itemToUser(item)]));
   }
 
   // A put replaces the whole item (the API role may not UpdateItem), so every profile attribute must be a field of User.
@@ -268,7 +287,7 @@ export class DynamoDb implements Db {
       const response = await this.documentClient.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `C#${challengeHash}`, sk: 'C' }, ConditionExpression: 'attribute_exists(pk)', ReturnValues: 'ALL_OLD' }));
       const item = response.Attributes!;
       const challenge: PendingChallenge = { purpose: item.purpose as PendingChallenge['purpose'], expiresAt: item.expiresAt as number };
-      for (const field of ['userId', 'name', 'timeZone'] as const) if (item[field] !== undefined) challenge[field] = item[field] as string;
+      for (const field of ['userId', 'name', 'timeZone', 'linkCodeHash'] as const) if (item[field] !== undefined) challenge[field] = item[field] as string;
       return challenge;
     } catch (error) {
       if (error instanceof ConditionalCheckFailedException) return null;
@@ -277,22 +296,7 @@ export class DynamoDb implements Db {
   }
 
   async passkeysOf(userId: string) {
-    const passkeys: Passkey[] = [];
-    let exclusiveStartKey: Record<string, unknown> | undefined;
-    do {
-      const response: QueryCommandOutput = await this.documentClient.send(
-        new QueryCommand({
-          TableName: this.tableName,
-          ConsistentRead: true,
-          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
-          ExpressionAttributeValues: { ':pk': userPartitionKey(userId), ':prefix': PASSKEY_SK_PREFIX },
-          ExclusiveStartKey: exclusiveStartKey,
-        }),
-      );
-      for (const item of response.Items ?? []) passkeys.push(itemToPasskey(item));
-      exclusiveStartKey = response.LastEvaluatedKey;
-    } while (exclusiveStartKey);
-    return passkeys;
+    return (await this.queryUserItems(userId, PASSKEY_SK_PREFIX)).map(itemToPasskey);
   }
 
   async getPasskey(userId: string, credentialId: string) {
@@ -312,13 +316,75 @@ export class DynamoDb implements Db {
     await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: this.passkeyItem(userId, passkey) }));
   }
 
-  async createAccount({ user, passkey, tokenHash, sweepDay }: NewAccount) {
+  async createAccount({ user, passkey, tokenHash, sweepDay, friendId }: NewAccount) {
     const transactItems: TransactItems = [
+      ...(friendId ? this.friendshipPuts(user.id, friendId, user.createdAt) : []),
       { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(user.id), sk: 'P', ...user }, ConditionExpression: 'attribute_not_exists(pk)' } },
       { Put: { TableName: this.tableName, Item: this.passkeyItem(user.id, passkey), ConditionExpression: 'attribute_not_exists(pk)' } },
       ...this.tokenPuts(tokenHash, user.id, user.createdAt),
       { Put: { TableName: this.tableName, Item: { pk: `W#${sweepDay}`, sk: userPartitionKey(user.id) } } },
     ];
     await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
+  }
+
+  async getLink(codeHash: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: linkKey(codeHash), ConsistentRead: true }));
+    return response.Item ? itemToLink(response.Item) : null;
+  }
+
+  private linkItem(codeHash: string, link: Link) {
+    return { ...linkKey(codeHash), ...link, ...(link.expiresAt ? { ttlEpochSeconds: Math.ceil(link.expiresAt / 1000) } : {}) };
+  }
+
+  async putLink(codeHash: string, link: Link, expectedVersion: number) {
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: this.linkItem(codeHash, link), ...versionCondition('version', expectedVersion) })));
+  }
+
+  async getFriendLink(userId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: 'L' }, ConsistentRead: true }));
+    return response.Item ? { code: response.Item.code as string, codeHash: response.Item.codeHash as string } : null;
+  }
+
+  async replaceFriendLink(userId: string, next: FriendLink, link: Link, previous: FriendLink | null) {
+    const ownerCondition = previous
+      ? { ConditionExpression: 'codeHash = :previous', ExpressionAttributeValues: { ':previous': previous.codeHash } }
+      : { ConditionExpression: 'attribute_not_exists(pk)' };
+    const transactItems: TransactItems = [
+      { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: 'L', ...next }, ...ownerCondition } },
+      { Put: { TableName: this.tableName, Item: this.linkItem(next.codeHash, link), ConditionExpression: 'attribute_not_exists(pk)' } },
+    ];
+    if (previous) transactItems.push({ Delete: { TableName: this.tableName, Key: linkKey(previous.codeHash) } });
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
+  }
+
+  async friendIds(userId: string) {
+    return (await this.queryUserItems(userId, FRIEND_SK_PREFIX, 'sk')).map((item) => (item.sk as string).slice(FRIEND_SK_PREFIX.length));
+  }
+
+  async isFriend(userId: string, otherUserId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: FRIEND_SK_PREFIX + otherUserId }, ConsistentRead: true }));
+    return !!response.Item;
+  }
+
+  private friendshipPuts(userId: string, friendId: string, createdAt: number): TransactItems {
+    return [
+      { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: FRIEND_SK_PREFIX + friendId, createdAt }, ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(friendId), sk: FRIEND_SK_PREFIX + userId, createdAt } } },
+    ];
+  }
+
+  async befriend(userId: string, friendId: string, createdAt: number) {
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: this.friendshipPuts(userId, friendId, createdAt) })));
+  }
+
+  async unfriend(userId: string, friendId: string) {
+    await this.documentClient.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          { Delete: { TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: FRIEND_SK_PREFIX + friendId } } },
+          { Delete: { TableName: this.tableName, Key: { pk: userPartitionKey(friendId), sk: FRIEND_SK_PREFIX + userId } } },
+        ],
+      }),
+    );
   }
 }

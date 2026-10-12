@@ -32,6 +32,9 @@ class DiskDb extends MemoryDb {
     this.challenges = new Map(snapshot.challenges as never);
     this.passkeys = nested(snapshot.passkeys);
     this.sweepMarkers = new Map((snapshot.sweepMarkers ?? []).map(([day, userIds]) => [day, new Set(userIds as string[])]));
+    this.links = new Map(snapshot.links as never);
+    this.friendLinks = new Map(snapshot.friendLinks as never);
+    this.friendships = nested(snapshot.friendships);
   }
   save() {
     const flat = <V>(byUser: Map<string, Map<string, V>>) => [...byUser].map(([userId, rows]) => [userId, [...rows]]);
@@ -49,6 +52,9 @@ class DiskDb extends MemoryDb {
         challenges: [...this.challenges],
         passkeys: flat(this.passkeys),
         sweepMarkers: [...this.sweepMarkers].map(([day, userIds]) => [day, [...userIds]]),
+        links: [...this.links],
+        friendLinks: [...this.friendLinks],
+        friendships: flat(this.friendships),
       }),
     );
   }

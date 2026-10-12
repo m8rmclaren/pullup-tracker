@@ -10,6 +10,11 @@ export function newSecret(): string {
   return randomBytes(32).toString('base64url');
 }
 
+/** 128 random bits, URL-safe: shorter than a token for links people share, still unguessable, which matters because redeeming one makes a friendship. */
+export function newLinkCode(): string {
+  return randomBytes(16).toString('base64url');
+}
+
 export function newUserId(): string {
   return randomBytes(9).toString('base64url');
 }

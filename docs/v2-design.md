@@ -235,10 +235,26 @@ A link is an `I#<digest>` item holding a typed payload:
   links** are one per member per challenge, reusable, and stop resolving a week after
   `toDay`. Each member shares their own, so the friendship goes to whoever shared it and
   the counters say which members bring people in.
-- **`openCount` and `joinCount`** are atomic counters, bumped by the resolve and by a
-  sign-up or friend-add through the link. With `joinedVia`, they are the whole growth
-  funnel: which kinds get opened, and which turn into accounts. No analytics vendor, and
-  nothing about the person opening the link is stored.
+- **`openCount` and `joinCount`** are counters, bumped by the resolve and by a sign-up or
+  redeem through the link that made something new. With `joinedVia`, they are the whole
+  growth funnel: which kinds get opened, and which turn into accounts. No analytics vendor,
+  and nothing about the person opening the link is stored.
+- **Counters without `UpdateItem`.** The API role may put but not update, so a bump is a
+  read and a put conditional on the link's `version`, retried a few times. It is best
+  effort and runs **after** the redeem or sign-up transaction, not inside it: a counter is
+  analytics, and contention on it must never fail a sign-up. A bump that loses three races
+  in a row is dropped and logged.
+- **Codes are 128 bits** (22 base64url characters), shorter than a token for something
+  people share, and still unguessable, which matters because redeeming one makes a
+  friendship.
+- **The owner's copy of a code is readable.** `I#<digest>` is the lookup, as for every
+  secret, but the user's `L` item (and, for challenges, their membership) also holds the
+  code itself, because every device must be able to show "your link" and a code can't be
+  rebuilt from its digest. A link is shareable by design, so a leaked code's worst case is
+  a friendship its owner sees and can remove, and anyone holding a table backup already
+  sees what that friendship would show. Session tokens stay digest-only.
+- An `I#` item of kind `friend` with `expiresAt` and no `openCount` is a single-use friend
+  invite from before passkeys. It is not a link, and resolving or redeeming it answers 404.
 
 ### Challenges
 
@@ -316,7 +332,7 @@ candidates in M0, while the data is one user's.
 | `U#<userId>` | `K#<credentialId>` | passkey: public key (COSE), sign count, transports, createdAt, label |
 | `U#<userId>` | `T#<digest>` | a session token from the account's side (createdAt), written with every `T#<digest> T` since passkeys, so the sweep and revocation can find an account's tokens without a scan |
 | `U#<userId>` | `F#<friendId>` | friendship (written on both sides in one transaction): createdAt |
-| `U#<userId>` | `L` | the user's current friend-link digest, so rotating it can delete the old `I#` item. Challenge links aren't tracked here. They expire. |
+| `U#<userId>` | `L` | the user's current friend link: `code` (readable, see Links) and `codeHash`, so rotating it can delete the old `I#` item. Challenge links aren't tracked here. They expire. |
 | `U#<userId>` | `Q#<day>` | compose usage counter for the day, with `ttlEpochSeconds` |
 | `U#<userId>` | `R#<fromUserId>` | incoming friend request: createdAt, challengeId, declinedAt? |
 | `U#<userId>` | `S#<toUserId>` | the same request from the sender's side, written in the same transaction |
@@ -365,8 +381,11 @@ last-writer-wins per field; every value comes with its clock (`validation.json`'
 `profilePatches`). Returns the stored profile, shaped like the sync response's `account`.
 A zone change rebuilds recent day totals before it returns (see Time zones).
 
-**`POST /api/friends`**: `{}` → `{ friends: [{ id, name }], friendLink }`.
-**`POST /api/friends/remove`**: `{ friendId }` deletes both sides.
+**`POST /api/friends`**: `{}` → `{ friends: [{ id, name }], friendLink }`. `friendLink` is
+the code; the friend link is made the first time it's asked for, so accounts from before
+links get one too.
+**`POST /api/friends/remove`**: `{ friendId }` deletes both sides. It answers `{}` whether
+or not the two were friends, so it can't probe for accounts.
 **`POST /api/friends/rotate-link`**: invalidates your old link, returns a new one.
 **`POST /api/friends/request`**: `{ userId, challengeId }` → `{ status: "requested" | "friends" }`.
 Idempotent. An ineligible target gets 404, so the endpoint can't probe for accounts.
@@ -381,7 +400,9 @@ the landing page to lead with the exercise. Aggregates only, no member names. Bu
 `openCount`. Rate-limited with the sign-up endpoints.
 **`POST /api/links/redeem`**: `{ code }` → `{ kind, friend: { id, name }, challenge?, definition? }`.
 Makes the friendship, and for a challenge link the membership and the adopted exercise, in
-one transaction. Bumps `joinCount` the first time. Idempotent. Replaces `/api/friends/add`.
+one transaction. Bumps `joinCount` when it made something new. Idempotent. Redeeming your
+own link is 400. An unknown, expired or rotated code, a device link and a pre-passkey
+invite all answer 404. Replaces `/api/friends/add`.
 
 **`POST /api/challenges/create`**: `{ exerciseId, fromDay, toDay, target? }` →
 `{ challenge, link }`. The creator is the first member.
@@ -415,7 +436,9 @@ reveal accounts.
 **Sign-up and passkeys** (see Auth):
 - `POST /api/signup/options` `{ name, timeZone?, linkCode? }` → creation options for a fresh
   user id. 403 while sign-up is closed.
-- `POST /api/signup` `{ credential, label }` → `{ token, account }`.
+- `POST /api/signup` `{ credential, label }` → `{ token, account, redeemed? }`. `redeemed`
+  is what the link did, shaped like `/api/links/redeem`'s response. A link that is dead at
+  `/api/signup/options` is 404; one that dies before `/api/signup` makes a plain account.
 - `POST /api/passkey/register/options` and `/api/passkey/register` (authenticated): add
   another passkey. Register returns `{ passkeys }`.
 - `POST /api/passkey/list` (authenticated) → `{ passkeys: [{ credentialId, label?, createdAt }] }`.
