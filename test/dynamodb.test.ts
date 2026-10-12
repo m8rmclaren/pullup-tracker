@@ -189,9 +189,9 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
   });
 
   it('takes a challenge exactly once, even when raced', async () => {
-    await db.putChallenge('c-race', { purpose: 'signup', userId: 'n1', name: 'New', timeZone: 'Europe/London', expiresAt: 5 });
+    await db.putChallenge('c-race', { purpose: 'signup', userId: 'n1', name: 'New', timeZone: 'Europe/London', dailyGoalReps: 40, linkCodeHash: 'lh', expiresAt: 5 });
     const taken = await Promise.all([1, 2, 3].map(() => db.takeChallenge('c-race')));
-    expect(taken.filter(Boolean)).toEqual([{ purpose: 'signup', userId: 'n1', name: 'New', timeZone: 'Europe/London', expiresAt: 5 }]);
+    expect(taken.filter(Boolean)).toEqual([{ purpose: 'signup', userId: 'n1', name: 'New', timeZone: 'Europe/London', dailyGoalReps: 40, linkCodeHash: 'lh', expiresAt: 5 }]);
     expect(await db.takeChallenge('never-issued')).toBeNull();
   });
 
@@ -290,5 +290,13 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     expect(await db.getUser('j1')).toEqual({ ...user, name: 'Joanna', nameUpdatedAt: 9, version: 1 });
     const users = await db.getUsers(['j1', 'k1', 'nobody', 'j1']);
     expect([...users.keys()].sort()).toEqual(['j1', 'k1']);
+  });
+
+  it('reads a user’s day totals in a range of days, and no one else’s', async () => {
+    for (const day of ['2026-09-30', '2026-10-01', '2026-10-15', '2026-10-31', '2026-11-01']) await db.putDayTotal('b1', { day, reps: 1, sets: 1, bestSetReps: 1, version: 1 }, null);
+    await db.putDayTotal('b2', { day: '2026-10-15', reps: 9, sets: 1, bestSetReps: 9, version: 1 }, null);
+    expect((await db.dayTotalsBetween('b1', '2026-10-01', '2026-10-31')).map((dayTotal) => dayTotal.day)).toEqual(['2026-10-01', '2026-10-15', '2026-10-31']);
+    expect(await db.dayTotalsBetween('b1', '0000-01-01', '9999-12-31')).toHaveLength(5);
+    expect(await db.dayTotalsBetween('b3', '0000-01-01', '9999-12-31')).toEqual([]);
   });
 });

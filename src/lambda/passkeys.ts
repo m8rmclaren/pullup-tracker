@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { type AuthenticationResponseJSON, type RegistrationResponseJSON, generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { type PasskeySummary, type SessionResponse, type SignupResponse, cleanName } from '../shared/model';
+import { MAX_DAILY_GOAL_REPS, MIN_DAILY_GOAL_REPS } from '../shared/profile';
 import { DEFAULT_TIME_ZONE, addDays, dayKey, isValidTimeZone } from '../shared/time';
 import { hashToken, isPlausibleSecret, newSecret, newUserId } from './auth';
 import { type ChallengePurpose, type Db, type NewAccount, type Passkey, type PendingChallenge, type User, PreconditionFailed } from './db';
@@ -102,13 +103,15 @@ export async function startSignup(db: Db, config: WebAuthnConfig, body: Record<s
   if (!name) throw new RequestError(400, 'Pick a name of 1 to 24 characters.');
   const timeZone = body.timeZone ?? DEFAULT_TIME_ZONE;
   if (!isValidTimeZone(timeZone)) throw new RequestError(400, 'timeZone must be an IANA time zone name.');
+  const { dailyGoalReps } = body;
+  if (dailyGoalReps !== undefined && !(Number.isInteger(dailyGoalReps) && (dailyGoalReps as number) >= MIN_DAILY_GOAL_REPS && (dailyGoalReps as number) <= MAX_DAILY_GOAL_REPS)) throw new RequestError(400, 'dailyGoalReps must be a whole number of reps.');
   let linkCodeHash: string | undefined;
   if (body.linkCode !== undefined) {
     if (!isPlausibleSecret(body.linkCode) || !(await liveLink(db, hashToken(body.linkCode), clock))) throw new RequestError(404, 'This link has expired or was replaced.');
     linkCodeHash = hashToken(body.linkCode);
   }
   const userId = newUserId();
-  const challenge = await issueChallenge(db, { purpose: 'signup', userId, name, timeZone, ...(linkCodeHash ? { linkCodeHash } : {}) }, clock);
+  const challenge = await issueChallenge(db, { purpose: 'signup', userId, name, timeZone, ...(dailyGoalReps !== undefined ? { dailyGoalReps: dailyGoalReps as number } : {}), ...(linkCodeHash ? { linkCodeHash } : {}) }, clock);
   return registrationOptions(config, userId, name, challenge);
 }
 
@@ -120,7 +123,8 @@ export async function startSignup(db: Db, config: WebAuthnConfig, body: Record<s
 export async function finishSignup(db: Db, config: WebAuthnConfig, body: Record<string, unknown>, clock: Clock): Promise<SignupResponse> {
   const { credential, challenge, pending } = await takeChallengeFor(db, body.credential, 'signup', clock);
   const passkey = await verifyNewPasskey(config, credential, challenge, body.label, clock);
-  const user: User = { id: pending.userId!, name: pending.name!, createdAt: clock.now(), timeZone: pending.timeZone! };
+  // No clock on the goal: set at sign-up, it loses to any edit.
+  const user: User = { id: pending.userId!, name: pending.name!, createdAt: clock.now(), timeZone: pending.timeZone!, ...(pending.dailyGoalReps !== undefined ? { dailyGoalReps: pending.dailyGoalReps } : {}) };
   const token = newSecret();
   const account: NewAccount = { user, passkey, tokenHash: hashToken(token), sweepDay: addDays(dayKey(clock.now(), 'UTC'), EMPTY_ACCOUNT_SWEEP_DAYS) };
   const viaLink = pending.linkCodeHash ? await liveLink(db, pending.linkCodeHash, clock) : null;

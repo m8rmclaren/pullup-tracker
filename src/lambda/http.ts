@@ -2,6 +2,7 @@ import { type Entry, MAX_PUSHED_ENTRIES, PROTOCOL_VERSION, isValidEntry } from '
 import { isValidProfilePatch } from '../shared/profile';
 import { type Definition, MAX_PUSHED_DEFINITIONS, isValidDefinition } from '../shared/definitions';
 import { createDeviceLink, redeemDeviceLink } from './accounts';
+import { leaderboard, viewProfile } from './boards';
 import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
 import { RequestError } from './errors';
 import { friendsResponse, rotateFriendLink } from './friends';
@@ -94,6 +95,8 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
       return ok({});
     }),
     '/api/friends/rotate-link': signedIn(async (userId) => ok({ friendLink: await rotateFriendLink(deps.db, userId, clock) })),
+    '/api/leaderboard': signedIn(async (userId, body) => ok(await leaderboard(deps.db, userId, body))),
+    '/api/profile/view': signedIn(async (userId, body) => ok(await viewProfile(deps.db, userId, body, clock))),
     '/api/links/resolve': async (body) => {
       if (!isPlausibleSecret(body.code)) return errorResponse(404, 'This link has expired or was replaced.');
       return ok(await resolveLink(deps.db, body.code, clock));

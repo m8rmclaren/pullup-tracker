@@ -1,4 +1,5 @@
 import { PULL_UP, builtInExercise, builtInVariation, isBuiltInId, isCreatedExerciseId, isCreatedVariationId } from './catalog';
+import type { BoardDay, BoardMember } from './boards';
 import type { Definition } from './definitions';
 import type { ProfileFields } from './profile';
 
@@ -268,4 +269,24 @@ export interface RedeemedLink {
 /** POST /api/signup: the session, plus what the link it came through did. */
 export interface SignupResponse extends SessionResponse {
   redeemed?: RedeemedLink;
+}
+
+/** POST /api/leaderboard: you and your friends, with day totals for the window, plus the created exercises those totals name. */
+export interface LeaderboardResponse {
+  users: BoardMember[];
+  definitions: Definition[];
+}
+
+export interface ExerciseSummary {
+  exerciseId: string;
+  totals: { sets: number; activeDays: number; reps?: number; holdSeconds?: number };
+  bests: { bestSetReps?: number; bestHoldSeconds?: number; bestAddedWeightLbs?: number };
+}
+
+/** POST /api/profile/view, friends only: a friend's profile, their last 90 days, and every exercise they've logged. */
+export interface ProfileViewResponse {
+  profile: { id: string; name: string; timeZone: string; dailyGoalReps?: number };
+  days: BoardDay[];
+  exercises: ExerciseSummary[];
+  definitions: Definition[];
 }

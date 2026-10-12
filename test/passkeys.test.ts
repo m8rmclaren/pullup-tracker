@@ -84,6 +84,17 @@ describe('passkey sign-up', () => {
     expect(await post('/api/signup/options', { name: 'Sam' })).toMatchObject({ status: 200, body: { rp: { id: 'pullups.example.com' }, authenticatorSelection: { residentKey: 'required', userVerification: 'required' }, attestation: 'none' } });
   });
 
+  it('keeps the device’s goal on the new profile, without a clock so any edit beats it', async () => {
+    const db = new MemoryDb();
+    const { post } = client(db);
+    const options = await post('/api/signup/options', { name: 'Gia', dailyGoalReps: 50 });
+    const signedUp = await post('/api/signup', { credential: new SoftAuthenticator().create(options.body as never, ORIGIN) });
+    const { account } = signedUp.body as { account: { id: string } };
+    expect(signedUp.body).toMatchObject({ account: { dailyGoalReps: 50 } });
+    expect(db.users.get(account.id)).not.toHaveProperty('goalUpdatedAt');
+    for (const dailyGoalReps of [0, 1.5, '40', 10_001]) expect((await post('/api/signup/options', { name: 'Gia', dailyGoalReps })).status).toBe(400);
+  });
+
   it('takes Denver from a client that sends no zone', async () => {
     const { signUp } = client(new MemoryDb());
     expect(await signUp(new SoftAuthenticator(), 'Old', null)).toMatchObject({ status: 200, body: { account: { timeZone: 'America/Denver' } } });

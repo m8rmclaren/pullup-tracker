@@ -1,5 +1,5 @@
 import { type PublicKeyCredentialCreationOptionsJSON, type PublicKeyCredentialRequestOptionsJSON, startAuthentication, startRegistration } from '@simplewebauthn/browser';
-import type { Account, FriendsResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
+import type { Account, FriendsResponse, LeaderboardResponse, ProfileViewResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
 import type { ProfilePatch } from '../shared/profile';
 import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
@@ -67,8 +67,8 @@ function deviceLabel(): string {
 }
 
 /** Makes an account: the server holds the name (and any link) while this device creates a passkey for it. */
-export async function signUpWithPasskey(name: string, timeZone: string, linkCode?: string): Promise<SignupResponse> {
-  const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>('/api/signup/options', linkCode ? { name, timeZone, linkCode } : { name, timeZone });
+export async function signUpWithPasskey(fields: { name: string; timeZone: string; dailyGoalReps: number; linkCode?: string }): Promise<SignupResponse> {
+  const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>('/api/signup/options', fields);
   const credential = await startRegistration({ optionsJSON });
   return post<SignupResponse>('/api/signup', { credential, label: deviceLabel() });
 }
@@ -125,3 +125,7 @@ export async function shareUrl(url: string): Promise<string | null> {
     return null;
   }
 }
+
+export const fetchLeaderboard = (window: { fromDay: string; toDay: string }, token: string) => post<LeaderboardResponse>('/api/leaderboard', window, token);
+
+export const fetchProfile = (userId: string, token: string) => post<ProfileViewResponse>('/api/profile/view', { userId }, token);

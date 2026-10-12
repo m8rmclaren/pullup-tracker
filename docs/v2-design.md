@@ -319,6 +319,21 @@ A challenge board evaluates the same specs over its members instead of your frie
 leads with the group: the members' summed count toward the target (or just the sum, with no
 target), then the ranking inside it, by `count` unless the viewer picks another metric.
 
+The rules `evaluateBoard` (`src/shared/boards.ts`) and `boards.json` pin:
+
+- **Higher is better.** A tie on the value breaks by `count` over the same days (except
+  when ranking by `count` itself). Members still tied **share a rank** (1, 1, 3) and are
+  listed by name, then id.
+- **`count`** across exercises is the ring (`reps`); for one exercise it is that exercise's
+  `reps` or `holdSeconds`, in its own unit. **`bestSet`** likewise.
+- **`goalPercent`** is 100 × the ring reps in the period ÷ (goal × days elapsed in the
+  period, up to the member's today), so a week is fair on Wednesday. It always reads the
+  ring, whatever the exercise. A member with no goal has no value: listed last, unranked.
+- A pre-v2 day total reads as all pull-ups (`exerciseDayTotals`).
+- The PWA's default board is this week, days active, ties broken by count (product.md,
+  open question 7). The client asks the server for two days either side of its own period,
+  so a friend whose today is a date ahead or behind is covered.
+
 The server stores totals and never ranks, so a new metric, a different default, or a tweak
 to how ties break ships in a client release. The limit: a metric can only use what a day
 total holds. A new day-total field (say, longest hold within a set) is additive, since
@@ -416,8 +431,9 @@ exercise and window. A non-member gets 404. A cap of 200 members keeps it one bo
 fan-out, like the leaderboard.
 
 **`POST /api/leaderboard`**: `{ fromDay, toDay }`, at most 62 days.
-- Response: `{ users: [{ id, name, timeZone, dailyGoalReps, days: [DayTotal] }], definitions }`,
-  for you and your friends.
+- Response: `{ users: [{ id, name, timeZone, dailyGoalReps?, days: [DayTotal] }], definitions }`,
+  for you and your friends. `definitions` are the created exercises those days name, so
+  friends' invented exercises have names. Day totals leave without their `version`.
 - Implementation: one friends query, then one day-total query per friend, in parallel, plus
   a batch get of profiles and definitions. A cap of 200 friends keeps this bounded. The
   `by-month` GSI is no longer needed for the board. It stays for operators' cross-user
@@ -426,16 +442,22 @@ fan-out, like the leaderboard.
   default are client decisions, and a widget can compute "you're #2 today" from the same
   response.
 
-**`POST /api/profile/view`**: `{ userId }`, friends only → `{ profile, days (last 90),
-exercises: [{ definition, totals, bests }] }`. A non-friend gets 404, not 403, so ids don't
-reveal accounts.
+**`POST /api/profile/view`**: `{ userId }`, friends (and yourself) only → `{ profile: { id,
+name, timeZone, dailyGoalReps? }, days (last 90, in their zone), exercises: [{ exerciseId,
+totals: { sets, activeDays, reps?, holdSeconds? }, bests: { bestSetReps?, bestHoldSeconds?,
+bestAddedWeightLbs? } }], definitions }`. Totals and bests are lifetime, from every stored
+day total. A built-in exercise has no definition on the wire, so exercises carry
+`exerciseId` and created ones come in `definitions`. A non-friend, a missing account and a
+malformed id all get the same 404, not 403, so ids don't reveal accounts.
 
 **`POST /api/compose`** (see The composer): `{ text, nowMs, timeZone, knownExercises: [{ id, name, measure, unit }] }`
 → `{ draft }`. Authenticated, capped per user per day.
 
 **Sign-up and passkeys** (see Auth):
-- `POST /api/signup/options` `{ name, timeZone?, linkCode? }` → creation options for a fresh
-  user id. 403 while sign-up is closed.
+- `POST /api/signup/options` `{ name, timeZone?, dailyGoalReps?, linkCode? }` → creation
+  options for a fresh user id. 403 while sign-up is closed. `dailyGoalReps` is the goal the
+  device was using, kept on the profile without a clock (so any edit beats it), so a new
+  account ranks on "% of goal" from day one.
 - `POST /api/signup` `{ credential, label }` → `{ token, account, redeemed? }`. `redeemed`
   is what the link did, shaped like `/api/links/redeem`'s response. A link that is dead at
   `/api/signup/options` is 404; one that dies before `/api/signup` makes a plain account.
