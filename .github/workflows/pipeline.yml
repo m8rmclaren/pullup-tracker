@@ -33,6 +33,9 @@ jobs:
         env:
           DYNAMODB_ENDPOINT: http://localhost:8000
       - run: npm run build
+        env:
+          # Team ID + bundle id; with it the site serves /.well-known/apple-app-site-association.
+          APPLE_APP_ID: ${{ vars.APPLE_APP_ID }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
@@ -86,6 +89,7 @@ jobs:
           -var "domain_name=${{ vars.DOMAIN_NAME }}"
           -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}"
           -var "signup_open=${{ vars.SIGNUP_OPEN || 'false' }}"
+          -var "sweep_enabled=${{ vars.SWEEP_ENABLED || 'false' }}"
       - run: scripts/publish-site.sh
       - name: summary
         run: |

@@ -15,6 +15,11 @@ aws s3 sync dist/site "s3://$bucket" \
   --exclude "assets/*" --exclude "manifest.webmanifest" --cache-control "no-cache" --delete
 aws s3 cp dist/site/manifest.webmanifest "s3://$bucket/manifest.webmanifest" \
   --content-type "application/manifest+json" --cache-control "no-cache"
+# iOS fetches this with no extension and needs it served as JSON, with no redirect.
+if [[ -f dist/site/.well-known/apple-app-site-association ]]; then
+  aws s3 cp dist/site/.well-known/apple-app-site-association "s3://$bucket/.well-known/apple-app-site-association" \
+    --content-type "application/json" --cache-control "no-cache"
+fi
 # Old hashed bundles are left in place on purpose: a phone still running the previous
 # shell can keep loading them until its service worker updates.
 

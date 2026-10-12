@@ -251,6 +251,14 @@ export interface Db {
   getDailyCount(userId: string, kind: 'requests', day: string): Promise<DailyCount | null>;
   /** Conditional on the stored version (null: none yet); expires with `ttlEpochSeconds`. */
   putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number): Promise<void>;
+
+  /** Accounts the empty-account sweep looks at on `day`. */
+  sweepMarkersFor(day: string): Promise<string[]>;
+  deleteSweepMarker(day: string, userId: string): Promise<void>;
+  /** Whether the account has anything that makes it worth keeping: an entry, a friend, a challenge or an adopted definition. */
+  hasContent(userId: string): Promise<boolean>;
+  /** Deletes everything in the account's partition and the session tokens it can find (those issued since passkeys). */
+  deleteAccount(userId: string): Promise<void>;
 }
 
 /** Db semantics over plain maps, for tests and the dev server. */
@@ -617,5 +625,27 @@ export class MemoryDb implements Db {
     const key = `${userId}|${kind}|${day}`;
     if ((this.dailyCounts.get(key)?.version ?? null) !== expectedVersion) throw new PreconditionFailed();
     this.dailyCounts.set(key, { ...count });
+  }
+
+  async sweepMarkersFor(day: string) {
+    return [...(this.sweepMarkers.get(day) ?? [])];
+  }
+
+  async deleteSweepMarker(day: string, userId: string) {
+    this.sweepMarkers.get(day)?.delete(userId);
+  }
+
+  async hasContent(userId: string) {
+    return !!this.entries.get(userId)?.size || !!this.friendships.get(userId)?.size || !!this.memberships.get(userId)?.size || !!this.adoptions.get(userId)?.size;
+  }
+
+  async deleteAccount(userId: string) {
+    for (const byUser of [this.entries, this.dayTotals, this.adoptions, this.passkeys, this.friendships, this.memberships, this.receivedRequests, this.sentRequestsByUser]) byUser.delete(userId);
+    this.users.delete(userId);
+    const friendLink = this.friendLinks.get(userId);
+    if (friendLink) this.links.delete(friendLink.codeHash);
+    this.friendLinks.delete(userId);
+    for (const [tokenHash, tokenUserId] of this.tokens) if (tokenUserId === userId) this.tokens.delete(tokenHash);
+    for (const key of this.dailyCounts.keys()) if (key.startsWith(`${userId}|`)) this.dailyCounts.delete(key);
   }
 }

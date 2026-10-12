@@ -34,11 +34,23 @@ const jsFile = outputs.find((path) => path.endsWith('.js'));
 const cssFile = outputs.find((path) => path.endsWith('.css'));
 
 cpSync(join(root, 'public'), siteDir, { recursive: true });
+
+// Associated Domains for the iOS app: passkeys (webcredentials) and links opening the app (applinks).
+// Links keep their code in the fragment, which AASA components can match.
+if (process.env.APPLE_APP_ID) {
+  const appIds = [process.env.APPLE_APP_ID];
+  const association = {
+    applinks: { details: [{ appIDs: appIds, components: [{ '/': '/', '#': 'join=*' }, { '/': '/', '#': 'device=*' }] }] },
+    webcredentials: { apps: appIds },
+  };
+  mkdirSync(join(siteDir, '.well-known'), { recursive: true });
+  writeFileSync(join(siteDir, '.well-known/apple-app-site-association'), JSON.stringify(association));
+}
 const html = readFileSync(join(root, 'public/index.html'), 'utf8').replace('%JS%', jsFile).replace('%CSS%', cssFile);
 writeFileSync(join(siteDir, 'index.html'), html);
 
 // The build id is a hash of everything shipped, so the service worker changes exactly when the app does.
-const files = walk(siteDir).filter((path) => !path.endsWith('.map'));
+const files = walk(siteDir).filter((path) => !path.endsWith('.map') && !path.startsWith('.well-known'));
 const buildHash = createHash('sha256');
 for (const file of files.sort()) buildHash.update(file).update(readFileSync(join(siteDir, file)));
 const buildId = buildHash.digest('hex').slice(0, 12);

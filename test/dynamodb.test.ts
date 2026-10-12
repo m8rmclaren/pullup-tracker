@@ -382,4 +382,30 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     await db.putDailyCount('dc', 'requests', '2026-10-14', { count: 2, version: 2 }, 1, 9_999_999_999);
     expect(await db.getDailyCount('dc', 'requests', '2026-10-14')).toEqual({ count: 2, version: 2 });
   });
+
+  it('finds sweep markers, tells an empty account from one with content, and deletes an account with its tokens', async () => {
+    const user = { id: 'sw1', name: 'Sweepme', createdAt: 1, timeZone: 'Europe/London' };
+    await db.createAccount({ user, passkey: { credentialId: 'cred-sw1', publicKey: 'pk', counter: 0, createdAt: 1 }, tokenHash: 'tok-sw1', sweepDay: '2026-11-20' });
+    await db.putToken('tok-sw1b', 'sw1', 2);
+    await db.replaceFriendLink('sw1', { code: 'sw1-code', codeHash: 'sw1-hash' }, { kind: 'friend', createdBy: 'sw1', createdAt: 1, openCount: 0, joinCount: 0, version: 1 }, null);
+    await db.createAccount({ user: { id: 'sw2', name: 'Keep', createdAt: 1 }, passkey: { credentialId: 'cred-sw2', publicKey: 'pk', counter: 0, createdAt: 1 }, tokenHash: 'tok-sw2', sweepDay: '2026-11-20' });
+    await db.putEntry('sw2', { id: 'kept-set', doneAt: OCT8, reps: 1, updatedAt: 1, serverWrittenAt: 5 }, null);
+    // Over 100 items, so deletion spans transactions.
+    await Promise.all(Array.from({ length: 120 }, (_, i) => db.putDayTotal('sw1', { day: `2026-0${1 + Math.floor(i / 28)}-${String(1 + (i % 28)).padStart(2, '0')}`, reps: 0, sets: 0, bestSetReps: 0, version: 1 }, null)));
+
+    expect((await db.sweepMarkersFor('2026-11-20')).sort()).toEqual(['sw1', 'sw2']);
+    expect(await db.hasContent('sw1')).toBe(false);
+    expect(await db.hasContent('sw2')).toBe(true);
+    await db.deleteAccount('sw1');
+    expect(await db.getUser('sw1')).toBeNull();
+    expect(await db.passkeysOf('sw1')).toEqual([]);
+    expect(await db.userIdForToken('tok-sw1')).toBeNull();
+    expect(await db.userIdForToken('tok-sw1b')).toBeNull();
+    expect(await db.dayTotalsBetween('sw1', '0000-01-01', '9999-12-31')).toEqual([]);
+    expect(await db.getFriendLink('sw1')).toBeNull();
+    expect(await db.getLink('sw1-hash')).toBeNull();
+    expect(await db.userIdForToken('tok-sw2')).toBe('sw2');
+    await db.deleteSweepMarker('2026-11-20', 'sw1');
+    expect(await db.sweepMarkersFor('2026-11-20')).toEqual(['sw2']);
+  });
 });

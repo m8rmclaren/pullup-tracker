@@ -48,4 +48,15 @@ describe('lambda handler', () => {
     const response = await handler(event('{"protocolVersion":2,"pushedEntries":[],"sinceCursor":0}'));
     expect(response).toMatchObject({ statusCode: 500, body: '{"error":"internal"}' });
   });
+
+  it('runs the empty-account sweep for the scheduled event, and never from a URL request', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    memoryDb.users.set('gone', { id: 'gone', name: 'Gone', createdAt: 1 });
+    memoryDb.sweepMarkers.set(new Date().toISOString().slice(0, 10), new Set(['gone']));
+    const urlRequest = await handler({ ...event('{"task":"sweep"}'), rawPath: '/api/sweep' });
+    expect(urlRequest.statusCode).toBe(404);
+    expect(memoryDb.users.has('gone')).toBe(true);
+    expect(await handler({ task: 'sweep' })).toEqual({ deleted: 1, kept: 0, remaining: 0 });
+    expect(memoryDb.users.has('gone')).toBe(false);
+  });
 });

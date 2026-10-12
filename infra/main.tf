@@ -240,6 +240,32 @@ resource "aws_lambda_permission" "cloudfront_invoke" {
   source_arn    = aws_cloudfront_distribution.app.arn
 }
 
+# Deletes accounts still empty 30 days after sign-up (src/lambda/sweep.ts). The rule invokes the
+# function directly with {"task":"sweep"}; it never goes through the Function URL. Off until
+# the deploy role may manage EventBridge rules (infra/bootstrap.yaml, SweepRules).
+resource "aws_cloudwatch_event_rule" "sweep" {
+  count               = var.sweep_enabled ? 1 : 0
+  name                = "${var.name}-sweep"
+  description         = "Daily empty-account sweep"
+  schedule_expression = "cron(30 9 * * ? *)"
+}
+
+resource "aws_cloudwatch_event_target" "sweep" {
+  count = var.sweep_enabled ? 1 : 0
+  rule  = aws_cloudwatch_event_rule.sweep[0].name
+  arn   = aws_lambda_function.api.arn
+  input = jsonencode({ task = "sweep" })
+}
+
+resource "aws_lambda_permission" "sweep" {
+  count         = var.sweep_enabled ? 1 : 0
+  statement_id  = "AllowDailySweep"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.sweep[0].arn
+}
+
 # ---------------------------------------------------------------- cloudfront
 
 resource "aws_cloudfront_origin_access_control" "site" {
