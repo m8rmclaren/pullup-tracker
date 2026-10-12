@@ -25,14 +25,17 @@ in, and it shows stats.
   push-ups at the top each time"). A language model composes it into sets for you to
   confirm. The server calls Claude Haiku for every client. Apple's on-device model can
   take over on iOS later.
-- **Exercises are open.** Anyone can define an exercise or a variation, and the backend
-  stores it at face value. Your exercises show up on your friends' leaderboards and on your
-  profile. This is the hook.
+- **Exercises are open, and they are the draw.** Anyone can define an exercise or a
+  variation, and the backend stores it at face value. The hook is the absurdity and
+  creativity of what people invent, so the app puts invented exercises up front: on
+  boards, on profiles, and leading every challenge link.
 - **Sign-up is a name and a passkey.** No email, no phone, no invite. Free forever, with
   no monetization.
 - **Friends are a graph, and links are the way in.** A friend link adds you. A challenge
-  link adds you and drops you onto a board for one exercise. Link kinds are data, so the
+  link puts you in a group working on one exercise together. Link kinds are data, so the
   growth loop can be tuned without a migration.
+- **Challenges are collective first.** The group works toward a total, with the ranking
+  visible inside. Joining means helping, not signing up to lose.
 - **Leaderboards are client-side views.** The server returns raw day totals and never
   ranks. A board is a small spec (metric, exercise, period), so ranking can be tuned in a
   client release.
@@ -62,7 +65,8 @@ which keeps developing as a full client instead of freezing.
 - Feeds, comments and reactions. The leaderboard and profiles are the whole social surface.
 - Workout programs, coaching, difficulty weighting.
 - Moderating exercise names beyond length and character checks. Visibility is limited to
-  friends, and unfriending is the block (see Risks).
+  friends and fellow challenge members, and unfriending or leaving is the block (see
+  Risks).
 - A native Android app, for now. Android uses the PWA.
 
 ## Decisions at a glance
@@ -75,8 +79,9 @@ which keeps developing as a full client instead of freezing.
 | Ring | Sums counted sets whose unit is **rep**. Other units and holds show per exercise, not on the ring. |
 | Natural language | Composes a **draft** of sets that you confirm. It never logs directly. |
 | Sign-up | Open. A display name, then a passkey. No account exists without a passkey. |
-| Friends | Mutual. Made by opening a link. |
-| Visibility | Friends see your profile, day totals and exercise definitions. Never individual sets. |
+| Friends | Mutual. Made by opening a link, or by a friend request to someone you share a challenge with. Joining a challenge befriends whoever shared the link. |
+| Challenges | One exercise, a window, an optional target. Collective first: the group total leads, the ranking sits inside. |
+| Visibility | Friends see your profile, day totals and exercise definitions. Challenge members see each other's names and that exercise's totals in the window. Never individual sets. |
 | Android | The PWA, kept current. Passkeys work through Google Password Manager. |
 | iOS distribution | TestFlight while building. The App Store once friends and profiles land (open sign-up makes it viable). |
 
@@ -153,20 +158,36 @@ year"). Charts use Swift Charts on iOS and the existing SVG charts in the PWA.
   resolves on the server to a stored payload, and the payload's `kind` decides where you
   land. Two kinds to start:
   - **Friend link:** your personal, reusable link. Opening it makes you friends.
-  - **Challenge link:** a friend link plus a board. "Red Rocks stairs, this month." Opening
-    it makes you friends, adds the exercise to your picker under the same id, and opens on
-    that board. The person arrives with a reason to log, and on the same id as everyone
-    else, so the board doesn't split.
+  - **Challenge link:** an invitation into a challenge. Every member has their own, so
+    everyone in a challenge can spread it. Opening it makes you friends with whoever
+    shared it, puts you in the challenge, adds the exercise to your picker under the same
+    id, and opens on the challenge board. The person arrives with a reason to log, and on
+    the same id as everyone else, so the board doesn't split.
 
-  Before sign-up, the landing page shows what the link is ("Hayden challenged you: Red
-  Rocks stairs, this month") from an unauthenticated resolve. Someone who isn't signed up
-  picks a name, creates a passkey, and lands in the same place when it finishes.
-- **Leaderboards** cover you and your friends. A board is a spec: a metric, an optional
-  exercise, and a period. Metrics to start: count in the exercise's unit, sets, best set,
-  active days, % of goal. Periods: today, this week, this month, or a challenge's fixed
-  window. "Red Rocks stairs, this month" is a board as soon as two friends have logged it.
-  Which board is the default is open (see Open questions). Total reps across exercises is easy to game
-  with easy reps, so it is one option, not the headline.
+  Before sign-up, the landing page leads with **the exercise**, since that's the draw:
+  its name, unit and description, then the group ("Red Rocks stairs: full run of the
+  amphitheatre stairs, bottom to top. 12 people, 412 of 1,000 laps this October. Hayden
+  wants you in."). Someone who isn't signed up picks a name, creates a passkey, and lands
+  on the board when it finishes.
+- **Challenges** are groups around one exercise, with a window of up to two months and an
+  optional target. Anyone can start one from any exercise they can see. The board leads
+  with the group's total toward the target, and the ranking of members sits inside it.
+  Members see each other there, friends or not, but only that exercise in that window.
+  Leaving is one tap. Finished challenges stay on profiles.
+- **Adding people is one tap wherever you see them.** Every member on a challenge board
+  who isn't your friend has **Add**. The Friends screen lists **people from your
+  challenges** you haven't added, so they're easy to find again after a challenge ends.
+  Add sends a request, because a friend sees much more than a fellow member does. The
+  other person sees it on Friends with where it came from ("Sam, from Red Rocks
+  October") and accepts in one tap. If both of you tap Add, you're friends at once. A
+  decline is silent: the sender keeps seeing "Requested" and can't send it again.
+- **Friends leaderboards** cover you and your friends. A board is a spec: a metric, an
+  optional exercise, and a period. Metrics to start: count in the exercise's unit, sets,
+  best set, active days, % of goal. Periods: today, this week, this month, or a
+  challenge's fixed window. "Red Rocks stairs, this month" is a board as soon as two
+  friends have logged it. Which board is the default is open (see Open questions). Total
+  reps across exercises is easy to game with easy reps, so it is one option, not the
+  headline.
 - **Profiles:** a friend's ring, streak, their exercises with totals and bests, and their
   recent days. Tapping one of their exercises offers **Add to mine**, which puts it in your
   picker under the same id, so you both land on the same board. This is how invented
@@ -203,12 +224,17 @@ reads the same.
 - Passkey sign-up, sign-in and extra passkeys. `/api/join` retired. The AASA file, on
   `pullups.haydenroszell.com` until the final domain is bought.
 - Links: friend links and challenge links, QR, resolve and redeem, rotate. The landing page
-  that shows what a link is before sign-up. `openCount`, `joinCount`, `joinedVia`.
+  that leads with the exercise before sign-up. `openCount`, `joinCount`, `joinedVia`.
+- Challenges: create, per-member links, join, leave, the challenge board (group total
+  toward the target, ranking inside).
+- Friend requests from challenge boards and "people from your challenges": send, accept,
+  decline, cancel.
 - The friends leaderboard as board specs, with `boards.json`. Friend profiles. Remove friend.
 - Sign-up rate limiting and the empty-account sweep.
 
-*Done when:* someone new opens your challenge link on a phone, picks a name, uses Face ID or a
-fingerprint, and lands on that challenge's board. You wipe Safari and sign back in.
+*Done when:* someone new opens your challenge link on a phone, picks a name, uses Face ID or
+a fingerprint, and lands on that challenge's board. They share their own link, a third
+person joins, and all three see one board. You wipe Safari and sign back in.
 
 **M2: the input pattern and the composer, in the PWA.**
 - Reps → exercise → configuration → Log. Repeat last set. Repeat session as a queue.
@@ -261,10 +287,11 @@ this environment's setup script.
 
 | Risk | Mitigation |
 |---|---|
-| Open exercise names carry abuse | Only friends see them. Unfriend is the block. M5 adds report (to the operator) and hide-this-exercise. App Store guideline 1.2 needs both. |
+| Open exercise names carry abuse | Only friends and members of the same challenge see them. Unfriending and leaving are the block. M5 adds report (to the operator) and hide-this-exercise. App Store guideline 1.2 needs both. |
 | Duplicate exercises split boards | Search-before-create in the picker and composer. Add to mine. `aliasOf` merging later. |
 | The model misreads a description | It only drafts. Every set is shown and editable before logging. Fixtures for regressions. |
 | Haiku spend grows with no revenue | Per-user daily cap, monthly ceiling, and the pad always works without it. The on-device model on iOS later, if needed. |
+| Friend-request spam | Requests only to people you share a challenge with, a daily cap, and silent declines that can't be re-sent. |
 | Junk accounts from open sign-up | WAF rate rule, empty-account sweep. Junk accounts are invisible to users. |
 | Losing every device loses the account | Passkeys sync. Device links from another device. Said plainly at sign-up. |
 | Two clients (iOS, PWA) to keep current | Shared TS and fixtures carry the logic. The PWA skips platform surfaces. |
@@ -302,12 +329,14 @@ Each has a default the plan assumes. Override any of them.
 5. **App Store listing: public or unlisted?** Default: public at M5, since the growth loop
    needs search and links to work.
 6. **Units?** Default: weight stored in lb, with a kg display preference.
-7. **Default board?** Total reps is easy to game with easy reps, and "% of goal" with a low
-   goal. Default to try: the exercise most of you and your friends logged this week, by
-   count. Needs a deeper look, which board specs leave room for.
-8. **What does a challenge look like beyond one exercise and a window?** A target ("1,000
-   push-ups in October"), a group board for everyone who joined, a challenge to someone
-   who isn't your friend yet? Default: one exercise and a window, to start. New shapes are
-   new link kinds and board fields.
+7. **Default friends board?** Total reps is easy to game with easy reps, and "% of goal"
+   with a low goal. Default to try: this week, days active, ties broken by count. A
+   candidate metric to add: improvement against your own recent average, which lets a
+   beginner beat someone stronger who is holding steady. It needs history beyond the
+   period, so it suits today and this week, not this month.
+8. **Should friends of friends be findable too** ("people you may know")? It's the next
+   easiest way to find people, but it shows your friends who your other friends are.
+   Default: no for now. It would be one more source of request eligibility, not a new
+   mechanism.
 9. **The product's name and final domain.** Default: `pullups.haydenroszell.com` until
    it's bought, and the move happens before the M2 checkpoint.

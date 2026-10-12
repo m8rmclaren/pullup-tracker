@@ -10,8 +10,10 @@ formats, the API, auth and the social graph. What the product does with them is 
 |---|---|
 | Measures | An exercise is counted (in a unit it names: rep, step, lap, flight…) or timed (seconds). |
 | Composer model | `/api/compose` → Claude Haiku 5.5 on every client. Apple's on-device model is a later cost and privacy optimization on iOS. |
-| Links | A short code resolving to a stored, typed payload: `friend` or `challenge` to start. Every kind makes a friendship. New kinds are additive. |
-| Leaderboard | Board specs `{ metric, exerciseId?, period }` evaluated by the client over raw day totals. The server never ranks. |
+| Links | A short code resolving to a stored, typed payload: `friend` or `challenge` to start. Every kind makes a friendship with whoever shared it. New kinds are additive. |
+| Friend requests | To anyone you share a challenge with. Accepted in one tap, mutual requests befriend at once, declines are silent and final. |
+| Challenges | A stored group: one exercise, a window of at most 62 days, an optional target. Members see each other's totals for that exercise in that window, and nothing else. Every member has their own link. |
+| Leaderboard | Board specs `{ metric, exerciseId?, period }` evaluated by the client over raw day totals. The server never ranks. A challenge board adds the group total toward the target. |
 | Growth measurement | Per-link open and join counters, and `joinedVia` on the profile. No analytics vendor. |
 | Domain | `pullups.haydenroszell.com` for now. Move to the final domain before anyone but the operator registers a passkey. |
 | Time zone | **Per user**, stored on the profile. Replaces Denver-for-everyone. |
@@ -166,23 +168,70 @@ A link is an `I#<digest>` item holding a typed payload:
 
 ```json
 { "kind": "challenge", "createdBy": "<userId>", "createdAt": 1791489600000,
-  "board": { "metric": "count", "exerciseId": "x-k3p9…", "fromDay": "2026-10-01", "toDay": "2026-10-31" },
-  "openCount": 14, "joinCount": 3 }
+  "challengeId": "g-7mfa…", "openCount": 14, "joinCount": 3 }
 ```
 
-- **Every kind makes a friendship.** That is the one behavior all links share. The payload
-  only adds a landing: a board, an adopted exercise. A client that meets a kind it doesn't
+- **Every kind makes a friendship** with the link's creator. That is the one behavior all
+  links share. The payload only adds a landing: a challenge, an adopted exercise. A client that meets a kind it doesn't
   know still makes the friendship and opens Today. So a new kind (a group challenge, an
   event) is a server change plus a client release, with no migration and no broken links
   on old clients.
 - **The URL carries only the code.** What a link means lives in the item, so it can change
   without changing the URL format, and a link can be retired by deleting one item.
 - **Friend links** are one per user, reusable, with no expiry, as before. **Challenge
-  links** are made per challenge, reusable, and stop resolving a week after `toDay`.
+  links** are one per member per challenge, reusable, and stop resolving a week after
+  `toDay`. Each member shares their own, so the friendship goes to whoever shared it and
+  the counters say which members bring people in.
 - **`openCount` and `joinCount`** are atomic counters, bumped by the resolve and by a
   sign-up or friend-add through the link. With `joinedVia`, they are the whole growth
   funnel: which kinds get opened, and which turn into accounts. No analytics vendor, and
   nothing about the person opening the link is stored.
+
+### Challenges
+
+A challenge is a group around one exercise, collective first and competitive inside:
+
+```json
+{ "id": "g-7mfa…", "exerciseId": "x-k3p9…", "fromDay": "2026-10-01", "toDay": "2026-10-31",
+  "target": 1000, "createdBy": "<userId>", "createdAt": 1791489600000, "memberCount": 12 }
+```
+
+- **Membership, not friendship, decides what you see.** Members see each other's names and
+  each member's day totals for the challenge's exercise, for days in the window. Not other
+  exercises, not other days, not profiles. Without this, two people who each joined
+  through your link couldn't see each other, and the board would break for exactly the
+  people it was for.
+- **Joining befriends only the person whose link you opened.** Any member can send any
+  other a friend request (see Friend requests).
+- **The server projects.** A non-friend member's day totals leave the server cut down to
+  that one exercise and window, never whole.
+- **`target` is optional**, in the exercise's unit. Without one, the group total still
+  shows.
+- **The window** is at most 62 days, so a challenge board is one leaderboard-sized read. Each
+  member's days are their own local days, as on every board.
+- **Leaving** deletes your membership. Your sets stay yours. The challenge item outlives
+  its window, so profiles can show past challenges ("Red Rocks October: 12 people,
+  1,043 laps").
+- Creating a challenge needs an exercise you can see. It is adopted by everyone who joins,
+  so the whole group logs to the same id.
+
+### Friend requests
+
+A friend sees your profile and every day total, so becoming friends takes both people. A
+link carries consent by being shared. Everywhere else, it's a request.
+
+- **Who can request whom:** two people who are members of the same challenge, now or in
+  the past. The request names that challenge, and the server checks both memberships with
+  two point gets. Eligibility is a rule in one place, so another source (friends of
+  friends, say) is an added check, not a new mechanism.
+- **Accepting** deletes both sides of the request and writes both sides of the friendship
+  in one transaction. **A request to someone who already requested you** accepts theirs.
+- **Declining is silent and final.** The receiver's side becomes a tombstone with
+  `declinedAt`. The sender still sees "Requested", and sending again is a no-op. A cancel
+  by the sender deletes both sides, unless it's already a tombstone.
+- **At most 50 requests a day** per sender, counted like compose usage.
+- Incoming requests arrive in the sync response, so every client can badge Friends
+  without a separate poll. Push is later.
 
 ### Boards
 
@@ -193,9 +242,13 @@ A board is a spec the client evaluates over friends' day totals:
 ```
 
 `metric` is one of `count`, `sets`, `bestSet`, `activeDays`, `goalPercent`. `period` is
-`today`, `week`, `month`, or a fixed `fromDay`/`toDay` window for a challenge. Specs are a
-shared TS and Swift type, pinned by fixtures (`boards.json`), and a challenge link stores
-one.
+`today`, `week`, `month`, or a fixed `fromDay`/`toDay` window for a challenge. Weeks and
+months are calendar periods in each person's own zone, so everyone gets a fresh start on
+Monday. Specs are a shared TS and Swift type, pinned by fixtures (`boards.json`).
+
+A challenge board evaluates the same specs over its members instead of your friends, and
+leads with the group: the members' summed count toward the target (or just the sum, with no
+target), then the ranking inside it, by `count` unless the viewer picks another metric.
 
 The server stores totals and never ranks, so a new metric, a different default, or a tweak
 to how ties break ships in a client release. The limit: a metric can only use what a day
@@ -211,15 +264,23 @@ candidates in M0, while the data is one user's.
 | `U#<userId>` | `F#<friendId>` | friendship (written on both sides in one transaction): createdAt |
 | `U#<userId>` | `L` | the user's current friend-link digest, so rotating it can delete the old `I#` item. Challenge links aren't tracked here. They expire. |
 | `U#<userId>` | `Q#<day>` | compose usage counter for the day, with `ttlEpochSeconds` |
+| `U#<userId>` | `R#<fromUserId>` | incoming friend request: createdAt, challengeId, declinedAt? |
+| `U#<userId>` | `S#<toUserId>` | the same request from the sender's side, written in the same transaction |
+| `U#<userId>` | `RQ#<day>` | friend requests sent that day, with `ttlEpochSeconds` |
 | `X#<exerciseId>` | `X` | created exercise |
 | `X#<exerciseId>` | `V#<variationId>` | created variation on that exercise (built-in exercises too: `X#pull-up V#v-…`) |
 | `C#<digest>` | `C` | pending WebAuthn challenge: purpose, userId?, name?, expiresAt, ttlEpochSeconds |
 | `I#<digest>` | `I` | gains the link kinds `friend` and `challenge`, with `createdBy`, the payload, `openCount`, `joinCount` and `ttlEpochSeconds` for challenges (see Links). `device` invites are unchanged. |
+| `G#<challengeId>` | `G` | challenge (see Challenges) |
+| `G#<challengeId>` | `M#<userId>` | membership: joinedAt, the member's challenge-link digest |
+| `U#<userId>` | `G#<challengeId>` | the same membership from the user's side, written in the same transaction, with `toDay` so active challenges list without a get per challenge |
 
 None needs a new index. Passkey login finds the credential through the `userHandle` the
 authenticator returns, which is the user id. Friends are a query on `U#<userId>` with
 `begins_with(sk, "F#")`. A friend's day totals are a query on `U#<friendId>` between
-`D#<from>` and `D#<to>`. Exercise definitions are point gets.
+`D#<from>` and `D#<to>`. A challenge's members are a query on `G#<challengeId>` with
+`begins_with(sk, "M#")`, and yours are the same on `U#<userId>` with `G#`. Exercise
+definitions are point gets.
 `test/dynamodb.test.ts`'s `CreateTableCommand` doesn't change.
 
 ## API
@@ -237,7 +298,8 @@ worker loads the new code on its next launch.
   `pushedDefinitions` holds created exercises and variations, each merged last-writer-wins
   and rejected if a non-creator tries to change one.
 - Response: as today, plus `definitions` for every created id referenced by the returned
-  entries or by your adopted list. `account` gains the new profile fields.
+  entries or by your adopted list. `account` gains the new profile fields and
+  `incomingRequests: [{ id, name, challengeId }]`, without tombstones.
 
 **`POST /api/profile`**: `{ name?, dailyGoalReps?, goalUpdatedAt?, timeZone?, zoneUpdatedAt? }`,
 last-writer-wins per field. Returns the stored profile.
@@ -245,15 +307,31 @@ last-writer-wins per field. Returns the stored profile.
 **`POST /api/friends`**: `{}` → `{ friends: [{ id, name }], friendLink }`.
 **`POST /api/friends/remove`**: `{ friendId }` deletes both sides.
 **`POST /api/friends/rotate-link`**: invalidates your old link, returns a new one.
+**`POST /api/friends/request`**: `{ userId, challengeId }` → `{ status: "requested" | "friends" }`.
+Idempotent. An ineligible target gets 404, so the endpoint can't probe for accounts.
+**`POST /api/friends/respond`**: `{ userId, accept }`.
+**`POST /api/friends/cancel`**: `{ userId }`.
+**`POST /api/friends/suggestions`**: `{}` → members of your challenges who aren't your
+friends, with the challenge you share and any request state.
 
-**`POST /api/links/resolve`** (unauthenticated): `{ code }` → `{ kind, inviterName, board?,
-definition? }`, enough for the landing page to say what the link is. Bumps `openCount`.
-Rate-limited with the sign-up endpoints.
-**`POST /api/links/redeem`**: `{ code }` → `{ kind, friend: { id, name }, board?, definition? }`.
-Makes the friendship, adopts the exercise for a challenge, bumps `joinCount` the first
-time. Idempotent. Replaces `/api/friends/add`.
-**`POST /api/challenges`**: `{ board }` → `{ link }`. The board must name an exercise you
-can see.
+**`POST /api/links/resolve`** (unauthenticated): `{ code }` → `{ kind, inviterName,
+challenge?: { definition, fromDay, toDay, target, memberCount, groupTotal } }`, enough for
+the landing page to lead with the exercise. Aggregates only, no member names. Bumps
+`openCount`. Rate-limited with the sign-up endpoints.
+**`POST /api/links/redeem`**: `{ code }` → `{ kind, friend: { id, name }, challenge?, definition? }`.
+Makes the friendship, and for a challenge link the membership and the adopted exercise, in
+one transaction. Bumps `joinCount` the first time. Idempotent. Replaces `/api/friends/add`.
+
+**`POST /api/challenges/create`**: `{ exerciseId, fromDay, toDay, target? }` →
+`{ challenge, link }`. The creator is the first member.
+**`POST /api/challenges/list`**: `{}` → your challenges, active and past, with their
+definitions.
+**`POST /api/challenges/link`**: `{ challengeId }` → your own link for it. Members only.
+**`POST /api/challenges/leave`**: `{ challengeId }`.
+**`POST /api/challenges/board`**: `{ challengeId }` → `{ challenge, definition, members:
+[{ id, name, isFriend, days }] }`, each member's days projected to the challenge's
+exercise and window. A non-member gets 404. A cap of 200 members keeps it one bounded
+fan-out, like the leaderboard.
 
 **`POST /api/leaderboard`**: `{ fromDay, toDay }`, at most 62 days.
 - Response: `{ users: [{ id, name, timeZone, dailyGoalReps, days: [DayTotal] }], definitions }`,
@@ -284,8 +362,8 @@ reveal accounts.
 **`POST /api/join` is retired.** Device links (`/api/invite {kind:"device"}` and redeeming
 them) stay for the Watch and for recovery.
 
-**`POST /api/account/delete`** deletes the whole `U#<userId>` partition and both sides of
-every friendship. Created exercises stay, with `createdBy` cleared, because friends' sets
+**`POST /api/account/delete`** deletes the whole `U#<userId>` partition, both sides of
+every friendship and friend request, and every challenge membership. Created exercises stay, with `createdBy` cleared, because friends' sets
 reference them. App Store guidelines require in-app deletion wherever an account can be
 created.
 
@@ -434,8 +512,9 @@ PWA) and, from M3, in Swift. Behavior is pinned by **shared JSON fixtures** in
   cases too.
 - **`validation.json`**: valid and invalid entries and definitions.
 - **`stats.json`**: an entry history, a zone, a "now", and the expected stats.
-- **`boards.json`**: board specs, friends' day totals and the expected ranking, including
-  ties, missing days and goal-less users.
+- **`boards.json`**: board specs, friends' or members' day totals and the expected ranking
+  and group total, including ties, missing days, goal-less users and members in other
+  zones.
 - **`compose/`**: drafts and the known-exercise lists they resolve against.
 
 The TS suites already contain most of the merge and day cases inline. M0 lifts them into
@@ -448,6 +527,8 @@ fixtures.
 | Passkeys bound to the wrong domain | Only the operator registers on the interim domain. Move to the final domain before links go out (the M2 checkpoint). |
 | A stale client strips v2 fields | The protocol gate (see API). |
 | A board metric needs data day totals don't hold | Add candidate fields in M0, while there is one user. Later fields need a backfill. |
+| Requests used to probe or spam | Only between members of a shared challenge, 404 for anyone else, 50 a day, silent final declines. |
+| Challenges show people to non-friends | Only names and one exercise's totals within the window, only to members of the same challenge, projected on the server. Leaving is the block. Report arrives in M5 with the rest. |
 
 ## Alternatives considered
 
@@ -459,6 +540,13 @@ fixtures.
 - **Link parameters in the URL** (`#friend=<code>&x=<exerciseId>`). Simpler, but the URL
   format becomes a contract with every link already shared, and there's nowhere to count
   opens. A stored payload can change meaning and be retired.
+- **Challenge members as each other's friends.** Simplest visibility rule, but joining one
+  challenge would fill your friend list with strangers and show them everything.
+- **Hub-and-spoke challenges** (members see only the people they're friends with).
+  No new visibility rule, but two people who joined through the same link can't see each
+  other, so the group total and the ranking are wrong for everyone but the creator.
+- **Adding a challenge member without a request.** One fewer step, but it would show them
+  your whole profile and every day total without asking.
 - **Server-ranked leaderboards.** Smaller responses, but every ranking change becomes an
   API change. Friend counts are small, so the client ranks.
 - **CloudKit instead of AWS.** Cross-user queries are awkward in CloudKit, it has no
