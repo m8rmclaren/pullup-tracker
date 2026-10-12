@@ -2,6 +2,7 @@ import { render } from 'preact';
 import { fetchTransport, profileTransport } from './api';
 import { App } from './App';
 import { Tracker } from './tracker';
+import { reloadWhenUpdated } from './updates';
 import './styles.css';
 
 const tracker = new Tracker({ storage: localStorage, transport: fetchTransport, profileTransport });
@@ -17,4 +18,18 @@ render(<App tracker={tracker} />, document.getElementById('app')!);
 
 if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
   window.addEventListener('load', () => void navigator.serviceWorker.register('/sw.js'));
+  const isSheetOpen = () => document.querySelector('.sheet-wrap') !== null;
+  reloadWhenUpdated({
+    serviceWorker: navigator.serviceWorker,
+    isEditing: isSheetOpen,
+    onEditingDone: (callback) => {
+      const observer = new MutationObserver(() => {
+        if (isSheetOpen()) return;
+        observer.disconnect();
+        callback();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+    reload: () => location.reload(),
+  });
 }

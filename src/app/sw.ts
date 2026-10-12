@@ -29,7 +29,7 @@ self.addEventListener('fetch', (event) => {
 
   // Cache-first so the app opens instantly with no signal. A deploy changes sw.js
   // (its build id), which the browser re-checks on launch; the new worker precaches
-  // the new shell and takes over, so the update lands on the following launch.
+  // the new shell and takes over; updates.ts then reloads the page into it.
   if (request.mode === 'navigate') {
     event.respondWith(caches.match('/index.html').then((cached) => cached ?? fetch(request)));
     return;

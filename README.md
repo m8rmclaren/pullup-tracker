@@ -76,8 +76,9 @@ From then on, everything happens inside the app. **Settings → Invite a friend*
 link for a new person, and **Add another device** makes a 15-minute link that signs another
 device into your own account.
 
-After that, merging to `main` is the deploy. Installed apps pick up a new version on their
-next launch.
+After that, merging to `main` is the deploy. An installed app picks up a new version the
+next time it opens: the new service worker takes over in the background, and the page
+reloads into it as soon as no sheet is open.
 
 ### What the CI role can do
 
@@ -212,8 +213,8 @@ or logged to, so a rename reaches all your devices.
 
 **The protocol gate.** A request without `protocolVersion: 2` gets **426**. A client that
 predates a field strips it when it normalizes a set, so its edit would silently undo
-another client's change. A turned-away PWA keeps its outbox and shows *Update*; the next
-launch loads the new build through the service worker, and the queued sets go up then.
+another client's change. A turned-away PWA keeps its outbox and shows *Update*; once the
+new build's service worker takes over, the page reloads into it and the queued sets go up.
 
 **Backups.** Point-in-time recovery is on, so the table can be restored to any second
 in the last 35 days.
@@ -231,7 +232,9 @@ in the last 35 days.
 - **Edits made during an in-flight sync stay queued.** An entry leaves the outbox only
   if the version the server acknowledged is still the latest local one.
 - **The app shell is precached** by a small hand-written service worker, so the app opens
-  with no signal at all. The `/api` path is never cached.
+  with no signal at all. The `/api` path is never cached. When a deploy's new worker takes
+  over, the page reloads into it right away (after any open sheet closes), rather than
+  on the following launch. Every tap is already saved, so the reload loses nothing.
 - The pill in the top right always says where things stand: *Synced*, *3 pending*,
   *Offline · 3*, *Signed out*, or *Sign in*.
 - **Logging works before you join.** Sets logged without an account stay on the device,
