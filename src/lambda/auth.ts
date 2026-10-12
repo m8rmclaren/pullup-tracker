@@ -15,6 +15,13 @@ export function newLinkCode(): string {
   return randomBytes(16).toString('base64url');
 }
 
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+/** 16 lowercase base32 characters (80 bits), the shape of created ids: `x-` exercises, `v-` variations, `g-` challenges. */
+export function newDefinitionSuffix(): string {
+  return [...randomBytes(16)].map((byte) => BASE32_ALPHABET[byte & 31]).join('');
+}
+
 export function newUserId(): string {
   return randomBytes(9).toString('base64url');
 }

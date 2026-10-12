@@ -1,5 +1,5 @@
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, parseDefinitionKeyString } from '../shared/definitions';
-import type { Entry } from '../shared/model';
+import type { Challenge, Entry } from '../shared/model';
 import type { ProfileFields } from '../shared/profile';
 import type { DayTotalRecord } from '../shared/stats';
 
@@ -90,6 +90,27 @@ export interface Passkey {
   label?: string;
 }
 
+/** A user's membership of a challenge, from their side. Their own link to it is kept readable, like a friend link. */
+export interface Membership {
+  challengeId: string;
+  joinedAt: number;
+  /** The challenge's last day, so active challenges list without a get per challenge. */
+  toDay: string;
+  linkCode: string;
+  linkCodeHash: string;
+}
+
+/** What joining a challenge writes, in one transaction: both sides of the membership, the member's own link, and the adoption of the exercise. */
+export interface ChallengeJoin {
+  userId: string;
+  membership: Membership;
+  link: Link;
+  /** Created exercises are adopted so the whole group logs to one id; a built-in needs nothing. */
+  adoptExerciseId?: string;
+  /** The person whose link it was, when they aren't friends yet. */
+  befriendId?: string;
+}
+
 /** Everything a sign-up writes, in one transaction: no account exists without a passkey. */
 export interface NewAccount {
   user: User;
@@ -99,6 +120,8 @@ export interface NewAccount {
   sweepDay: string;
   /** Signing up through a link befriends its creator in the same write. */
   friendId?: string;
+  /** Signing up through a challenge link joins it in the same write (its befriendId is unused: friendId covers it). */
+  challengeJoin?: ChallengeJoin;
 }
 
 /** Thrown when a conditional write loses a race; the caller re-reads and retries. */
@@ -178,6 +201,18 @@ export interface Db {
   befriend(userId: string, friendId: string, createdAt: number): Promise<void>;
   /** Deletes both sides; a no-op for people who weren't friends. */
   unfriend(userId: string, friendId: string): Promise<void>;
+
+  getChallenge(challengeId: string): Promise<Challenge | null>;
+  getChallenges(challengeIds: string[]): Promise<Map<string, Challenge>>;
+  /** Writes the challenge and joins its creator. Throws PreconditionFailed if the id is taken. */
+  createChallenge(challenge: Challenge, creatorJoin: ChallengeJoin): Promise<void>;
+  /** Throws PreconditionFailed if already a member, or if befriendId has become a friend meanwhile. */
+  joinChallenge(join: ChallengeJoin): Promise<void>;
+  /** Deletes both sides of the membership and the member's link. */
+  leaveChallenge(userId: string, membership: Membership): Promise<void>;
+  getMembership(userId: string, challengeId: string): Promise<Membership | null>;
+  membershipsOf(userId: string): Promise<Membership[]>;
+  challengeMemberIds(challengeId: string): Promise<string[]>;
 }
 
 /** Db semantics over plain maps, for tests and the dev server. */
@@ -190,7 +225,7 @@ export class MemoryDb implements Db {
   definitions = new Map<string, StoredDefinition>();
   /** userId → definitionKeyString → adoptedAt */
   adoptions = new Map<string, Map<string, number>>();
-  challenges = new Map<string, PendingChallenge>();
+  pendingChallenges = new Map<string, PendingChallenge>();
   /** userId → credentialId → passkey */
   passkeys = new Map<string, Map<string, Passkey>>();
   /** sweep day → user ids */
@@ -199,6 +234,9 @@ export class MemoryDb implements Db {
   friendLinks = new Map<string, FriendLink>();
   /** userId → friendId → createdAt, both directions stored */
   friendships = new Map<string, Map<string, number>>();
+  challenges = new Map<string, Challenge>();
+  /** userId → challengeId → membership; the challenge's side is derived from it */
+  memberships = new Map<string, Map<string, Membership>>();
 
   private userEntries(userId: string) {
     let entriesById = this.entries.get(userId);
@@ -321,12 +359,12 @@ export class MemoryDb implements Db {
   }
 
   async putChallenge(challengeHash: string, challenge: PendingChallenge) {
-    this.challenges.set(challengeHash, { ...challenge });
+    this.pendingChallenges.set(challengeHash, { ...challenge });
   }
 
   async takeChallenge(challengeHash: string) {
-    const challenge = this.challenges.get(challengeHash);
-    this.challenges.delete(challengeHash);
+    const challenge = this.pendingChallenges.get(challengeHash);
+    this.pendingChallenges.delete(challengeHash);
     return challenge ?? null;
   }
 
@@ -354,9 +392,10 @@ export class MemoryDb implements Db {
     this.userPasskeys(userId).set(passkey.credentialId, { ...passkey });
   }
 
-  async createAccount({ user, passkey, tokenHash, sweepDay, friendId }: NewAccount) {
+  async createAccount({ user, passkey, tokenHash, sweepDay, friendId, challengeJoin }: NewAccount) {
     if (this.users.has(user.id) || this.tokens.has(tokenHash)) throw new PreconditionFailed();
     if (friendId) await this.befriend(user.id, friendId, user.createdAt);
+    if (challengeJoin) await this.joinChallenge({ ...challengeJoin, befriendId: undefined });
     this.users.set(user.id, { ...user });
     this.userPasskeys(user.id).set(passkey.credentialId, { ...passkey });
     this.tokens.set(tokenHash, user.id);
@@ -419,5 +458,57 @@ export class MemoryDb implements Db {
   async unfriend(userId: string, friendId: string) {
     this.userFriendships(userId).delete(friendId);
     this.userFriendships(friendId).delete(userId);
+  }
+
+  async getChallenge(challengeId: string) {
+    const challenge = this.challenges.get(challengeId);
+    return challenge ? { ...challenge } : null;
+  }
+
+  async getChallenges(challengeIds: string[]) {
+    const challengesById = new Map<string, Challenge>();
+    for (const challengeId of challengeIds) {
+      const challenge = this.challenges.get(challengeId);
+      if (challenge) challengesById.set(challengeId, { ...challenge });
+    }
+    return challengesById;
+  }
+
+  private userMemberships(userId: string) {
+    let membershipsById = this.memberships.get(userId);
+    if (!membershipsById) this.memberships.set(userId, (membershipsById = new Map()));
+    return membershipsById;
+  }
+
+  async createChallenge(challenge: Challenge, creatorJoin: ChallengeJoin) {
+    if (this.challenges.has(challenge.id)) throw new PreconditionFailed();
+    this.challenges.set(challenge.id, { ...challenge });
+    await this.joinChallenge(creatorJoin);
+  }
+
+  async joinChallenge({ userId, membership, link, adoptExerciseId, befriendId }: ChallengeJoin) {
+    if (this.userMemberships(userId).has(membership.challengeId)) throw new PreconditionFailed();
+    if (befriendId) await this.befriend(userId, befriendId, membership.joinedAt);
+    this.userMemberships(userId).set(membership.challengeId, { ...membership });
+    this.links.set(membership.linkCodeHash, { ...link });
+    if (adoptExerciseId) await this.adoptDefinition(userId, { exerciseId: adoptExerciseId }, membership.joinedAt);
+  }
+
+  async leaveChallenge(userId: string, membership: Membership) {
+    this.userMemberships(userId).delete(membership.challengeId);
+    this.links.delete(membership.linkCodeHash);
+  }
+
+  async getMembership(userId: string, challengeId: string) {
+    const membership = this.userMemberships(userId).get(challengeId);
+    return membership ? { ...membership } : null;
+  }
+
+  async membershipsOf(userId: string) {
+    return [...this.userMemberships(userId).values()].map((membership) => ({ ...membership }));
+  }
+
+  async challengeMemberIds(challengeId: string) {
+    return [...this.memberships].filter(([, membershipsById]) => membershipsById.has(challengeId)).map(([userId]) => userId);
   }
 }

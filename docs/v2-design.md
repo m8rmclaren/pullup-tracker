@@ -262,8 +262,13 @@ A challenge is a group around one exercise, collective first and competitive ins
 
 ```json
 { "id": "g-7mfa…", "exerciseId": "x-k3p9…", "fromDay": "2026-10-01", "toDay": "2026-10-31",
-  "target": 1000, "createdBy": "<userId>", "createdAt": 1791489600000, "memberCount": 12 }
+  "target": 1000, "createdBy": "<userId>", "createdAt": 1791489600000 }
 ```
+
+- **`memberCount` is counted, not stored**: a query of the challenge's `M#` items. A stored
+  counter would need `UpdateItem`, or a read-modify-put on the challenge item that every
+  join would contend on. The 200-member cap is checked by the same count before a join,
+  so a race can let a challenge pass 200 by a few, which is harmless.
 
 - **Membership, not friendship, decides what you see.** Members see each other's names and
   each member's day totals for the challenge's exercise, for days in the window. Not other
@@ -281,8 +286,18 @@ A challenge is a group around one exercise, collective first and competitive ins
 - **Leaving** deletes your membership. Your sets stay yours. The challenge item outlives
   its window, so profiles can show past challenges ("Red Rocks October: 12 people,
   1,043 laps").
-- Creating a challenge needs an exercise you can see. It is adopted by everyone who joins,
-  so the whole group logs to the same id.
+- Creating a challenge needs an exercise you can see: a built-in, or a created exercise you
+  have adopted. It is adopted by everyone who joins, so the whole group logs to the same
+  id. The window must end today or later and start within a year.
+- **A member's link** lives on their side of the membership (`U# G#`, code readable, as for
+  friend links) and stops resolving a week after `toDay`: at noon UTC on `toDay + 8`, a
+  week after the last zone finishes `toDay`. **Leaving** also deletes your link, so nobody
+  joins through someone who is no longer in it.
+- **On the wire**, a board member's days are `{ day, sets, reps?, holdSeconds?,
+  bestSetReps?, bestHoldSeconds?, bestAddedWeightLbs? }` for the one exercise, with no
+  zone or goal, friend or not. `challengeBoardMembers` (`src/shared/boards.ts`) turns them
+  into board members for `evaluateBoard`; `goalPercent`, which reads the ring, isn't
+  offered on a challenge board.
 
 ### Friend requests
 
@@ -360,7 +375,7 @@ candidates in M0, while the data is one user's.
 | `I#<digest>` | `I` | gains the link kinds `friend` and `challenge`, with `createdBy`, the payload, `openCount`, `joinCount` and `ttlEpochSeconds` for challenges (see Links). `device` invites are unchanged. |
 | `G#<challengeId>` | `G` | challenge (see Challenges) |
 | `G#<challengeId>` | `M#<userId>` | membership: joinedAt, the member's challenge-link digest |
-| `U#<userId>` | `G#<challengeId>` | the same membership from the user's side, written in the same transaction, with `toDay` so active challenges list without a get per challenge |
+| `U#<userId>` | `G#<challengeId>` | the same membership from the user's side, written in the same transaction, with `toDay` so active challenges list without a get per challenge, and the member's link code (readable) and digest |
 
 None needs a new index. Passkey login finds the credential through the `userHandle` the
 authenticator returns, which is the user id. Friends are a query on `U#<userId>` with
@@ -420,15 +435,21 @@ own link is 400. An unknown, expired or rotated code, a device link and a pre-pa
 invite all answer 404. Replaces `/api/friends/add`.
 
 **`POST /api/challenges/create`**: `{ exerciseId, fromDay, toDay, target? }` →
-`{ challenge, link }`. The creator is the first member.
-**`POST /api/challenges/list`**: `{}` → your challenges, active and past, with their
-definitions.
-**`POST /api/challenges/link`**: `{ challengeId }` → your own link for it. Members only.
-**`POST /api/challenges/leave`**: `{ challengeId }`.
-**`POST /api/challenges/board`**: `{ challengeId }` → `{ challenge, definition, members:
-[{ id, name, isFriend, days }] }`, each member's days projected to the challenge's
-exercise and window. A non-member gets 404. A cap of 200 members keeps it one bounded
-fan-out, like the leaderboard.
+`{ challenge, definition?, memberCount, link }`. The creator is the first member.
+**`POST /api/challenges/list`**: `{}` → `{ challenges: [{ challenge, definition?,
+memberCount, link }] }`, active first (soonest to end), then past. No group totals, which
+would cost a read per member of every challenge.
+**`POST /api/challenges/link`**: `{ challengeId }` → `{ link }`, your own. Members only.
+**`POST /api/challenges/leave`**: `{ challengeId }` → `{}`, member or not.
+**`POST /api/challenges/board`**: `{ challengeId }` → `{ challenge, definition?,
+memberCount, groupTotal, members: [{ id, name, isFriend, days }] }`, each member's days
+projected to the challenge's exercise and window. A non-member, a missing challenge and
+junk get the same 404. A cap of 200 members keeps it one bounded fan-out, like the
+leaderboard. Joining a full challenge is 409.
+`definition` is present when the exercise is a created one; built-ins come from the
+catalog. `/api/links/resolve` and `/api/links/redeem` return the same `{ challenge,
+definition?, memberCount, groupTotal }` summary for a challenge link, and a sign-up through
+one joins it in the sign-up transaction.
 
 **`POST /api/leaderboard`**: `{ fromDay, toDay }`, at most 62 days.
 - Response: `{ users: [{ id, name, timeZone, dailyGoalReps?, days: [DayTotal] }], definitions }`,

@@ -152,7 +152,7 @@ describe('signing up through a link', () => {
   it('refuses a dead link up front, and makes a plain account if the link dies mid-sign-up', async () => {
     const { db, post, linkOf } = setup();
     expect((await signUp(post, { name: 'Dee', linkCode: 'never-issued-code-0123456789' })).status).toBe(404);
-    expect(db.challenges.size).toBe(0);
+    expect(db.pendingChallenges.size).toBe(0);
 
     const code = await linkOf('op');
     const options = await post('/api/signup/options', { name: 'Eve', linkCode: code });

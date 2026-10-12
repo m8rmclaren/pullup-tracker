@@ -60,7 +60,7 @@ describe('passkey sign-up', () => {
     expect(db.users.get(account.id)).toEqual({ id: account.id, name: 'Sam', createdAt: OCT8, timeZone: 'Europe/London' });
     expect(await db.passkeysOf(account.id)).toEqual([expect.objectContaining({ counter: 0, label: 'Pixel', createdAt: OCT8, transports: ['internal', 'hybrid'] })]);
     expect(db.sweepMarkers.get('2026-11-07')).toEqual(new Set([account.id]));
-    expect(db.challenges.size).toBe(0);
+    expect(db.pendingChallenges.size).toBe(0);
   });
 
   it('is refused while sign-up is closed, and everything is refused without a domain', async () => {
@@ -80,7 +80,7 @@ describe('passkey sign-up', () => {
     expect((await post('/api/signup/options', { name: '   ' })).status).toBe(400);
     expect((await post('/api/signup/options', { name: 'x'.repeat(25) })).status).toBe(400);
     expect((await post('/api/signup/options', { name: 'Sam', timeZone: 'Mars/Base' })).status).toBe(400);
-    expect(db.challenges.size).toBe(0);
+    expect(db.pendingChallenges.size).toBe(0);
     expect(await post('/api/signup/options', { name: 'Sam' })).toMatchObject({ status: 200, body: { rp: { id: 'pullups.example.com' }, authenticatorSelection: { residentKey: 'required', userVerification: 'required' }, attestation: 'none' } });
   });
 

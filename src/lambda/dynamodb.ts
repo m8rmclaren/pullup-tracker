@@ -1,7 +1,8 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, type BatchGetCommandOutput, DeleteCommand, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
-import { type Db, type FriendLink, type Invite, type Link, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
+import type { Challenge } from '../shared/model';
+import { type ChallengeJoin, type Db, type FriendLink, type Invite, type Link, type Membership, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
@@ -21,6 +22,10 @@ import { type Db, type FriendLink, type Invite, type Link, type NewAccount, type
 //                           or shared link: kind 'friend' | 'challenge', createdBy, createdAt, openCount, joinCount, version,
 //                           challengeId?, expiresAt?/ttlEpochSeconds? (challenge links). A friend invite from before passkeys
 //                           has kind 'friend' and expiresAt but no openCount, and is neither.
+//   G#<chId>    G           challenge: id, exerciseId, fromDay, toDay, target?, createdBy, createdAt
+//   G#<chId>    M#<userId>  membership from the challenge's side: joinedAt, linkCodeHash
+//   U#<userId>  G#<chId>    the same membership from the user's side, in the same transaction: challengeId, joinedAt, toDay,
+//                           linkCode (the member's own challenge link, readable), linkCodeHash
 //   C#<hash>    C           pending WebAuthn challenge: purpose, userId?, name?, timeZone?, expiresAt, ttlEpochSeconds
 //   W#<day>     U#<userId>  the empty-account sweep looks at this account on <day>
 //   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
@@ -34,6 +39,19 @@ const ADOPTED_SK_PREFIX = 'A#';
 const PASSKEY_SK_PREFIX = 'K#';
 const TOKEN_SK_PREFIX = 'T#';
 const FRIEND_SK_PREFIX = 'F#';
+const MEMBER_SK_PREFIX = 'M#';
+const MEMBERSHIP_SK_PREFIX = 'G#';
+const challengeKey = (challengeId: string) => ({ pk: `G#${challengeId}`, sk: 'G' });
+
+function itemToChallenge(item: Record<string, unknown>): Challenge {
+  const challenge: Challenge = { id: item.id as string, exerciseId: item.exerciseId as string, fromDay: item.fromDay as string, toDay: item.toDay as string, createdBy: item.createdBy as string, createdAt: item.createdAt as number };
+  if (item.target !== undefined) challenge.target = item.target as number;
+  return challenge;
+}
+
+function itemToMembership(item: Record<string, unknown>): Membership {
+  return { challengeId: item.challengeId as string, joinedAt: item.joinedAt as number, toDay: item.toDay as string, linkCode: item.linkCode as string, linkCodeHash: item.linkCodeHash as string };
+}
 const linkKey = (codeHash: string) => ({ pk: `I#${codeHash}`, sk: 'I' });
 
 type TransactItems = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']>;
@@ -325,9 +343,10 @@ export class DynamoDb implements Db {
     await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: this.passkeyItem(userId, passkey) }));
   }
 
-  async createAccount({ user, passkey, tokenHash, sweepDay, friendId }: NewAccount) {
+  async createAccount({ user, passkey, tokenHash, sweepDay, friendId, challengeJoin }: NewAccount) {
     const transactItems: TransactItems = [
       ...(friendId ? this.friendshipPuts(user.id, friendId, user.createdAt) : []),
+      ...(challengeJoin ? this.joinItems({ ...challengeJoin, befriendId: undefined }, true) : []),
       { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(user.id), sk: 'P', ...user }, ConditionExpression: 'attribute_not_exists(pk)' } },
       { Put: { TableName: this.tableName, Item: this.passkeyItem(user.id, passkey), ConditionExpression: 'attribute_not_exists(pk)' } },
       ...this.tokenPuts(tokenHash, user.id, user.createdAt),
@@ -395,5 +414,67 @@ export class DynamoDb implements Db {
         ],
       }),
     );
+  }
+
+  async getChallenge(challengeId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: challengeKey(challengeId), ConsistentRead: true }));
+    return response.Item ? itemToChallenge(response.Item) : null;
+  }
+
+  async getChallenges(challengeIds: string[]) {
+    const items = await this.batchGetItems([...new Set(challengeIds)].map(challengeKey));
+    return new Map(items.map((item) => [item.id as string, itemToChallenge(item)]));
+  }
+
+  /** The writes of a join. `checkChallenge` adds a check that the challenge exists, which a create can't have (one op per item). */
+  private joinItems({ userId, membership, link, adoptExerciseId, befriendId }: ChallengeJoin, checkChallenge: boolean): TransactItems {
+    const items: TransactItems = [
+      { Put: { TableName: this.tableName, Item: { pk: `G#${membership.challengeId}`, sk: MEMBER_SK_PREFIX + userId, joinedAt: membership.joinedAt, linkCodeHash: membership.linkCodeHash }, ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: MEMBERSHIP_SK_PREFIX + membership.challengeId, ...membership } } },
+      { Put: { TableName: this.tableName, Item: this.linkItem(membership.linkCodeHash, link), ConditionExpression: 'attribute_not_exists(pk)' } },
+    ];
+    if (checkChallenge) items.push({ ConditionCheck: { TableName: this.tableName, Key: challengeKey(membership.challengeId), ConditionExpression: 'attribute_exists(pk)' } });
+    if (adoptExerciseId) items.push({ Put: { TableName: this.tableName, Item: { pk: userPartitionKey(userId), sk: ADOPTED_SK_PREFIX + definitionKeyString({ exerciseId: adoptExerciseId }), adoptedAt: membership.joinedAt } } });
+    if (befriendId) items.push(...this.friendshipPuts(userId, befriendId, membership.joinedAt));
+    return items;
+  }
+
+  async createChallenge(challenge: Challenge, creatorJoin: ChallengeJoin) {
+    const transactItems: TransactItems = [{ Put: { TableName: this.tableName, Item: { ...challengeKey(challenge.id), ...challenge }, ConditionExpression: 'attribute_not_exists(pk)' } }, ...this.joinItems(creatorJoin, false)];
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
+  }
+
+  async joinChallenge(join: ChallengeJoin) {
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: this.joinItems(join, true) })));
+  }
+
+  async leaveChallenge(userId: string, membership: Membership) {
+    await this.documentClient.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          { Delete: { TableName: this.tableName, Key: { pk: `G#${membership.challengeId}`, sk: MEMBER_SK_PREFIX + userId } } },
+          { Delete: { TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: MEMBERSHIP_SK_PREFIX + membership.challengeId } } },
+          { Delete: { TableName: this.tableName, Key: linkKey(membership.linkCodeHash) } },
+        ],
+      }),
+    );
+  }
+
+  async getMembership(userId: string, challengeId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: MEMBERSHIP_SK_PREFIX + challengeId }, ConsistentRead: true }));
+    return response.Item ? itemToMembership(response.Item) : null;
+  }
+
+  async membershipsOf(userId: string) {
+    return (await this.queryUserItems(userId, MEMBERSHIP_SK_PREFIX)).map(itemToMembership);
+  }
+
+  async challengeMemberIds(challengeId: string) {
+    const items = await this.queryAll({
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': `G#${challengeId}`, ':prefix': MEMBER_SK_PREFIX },
+      ProjectionExpression: 'sk',
+    });
+    return items.map((item) => (item.sk as string).slice(MEMBER_SK_PREFIX.length));
   }
 }

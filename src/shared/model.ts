@@ -1,6 +1,7 @@
 import { PULL_UP, builtInExercise, builtInVariation, isBuiltInId, isCreatedExerciseId, isCreatedVariationId } from './catalog';
 import type { BoardDay, BoardMember } from './boards';
 import type { Definition } from './definitions';
+import type { ExerciseDayTotal } from './stats';
 import type { ProfileFields } from './profile';
 
 // The data model is a state-based CRDT: a map of entries keyed by id, where each
@@ -254,16 +255,58 @@ export interface FriendsResponse {
   friendLink: string;
 }
 
-/** POST /api/links/resolve, which needs no account: enough for the landing page. */
+/** A group around one exercise, over a window of at most 62 days, with an optional target in the exercise's unit. */
+export interface Challenge {
+  id: string;
+  exerciseId: string;
+  fromDay: string;
+  toDay: string;
+  target?: number;
+  createdBy: string;
+  createdAt: number;
+}
+
+/** A challenge with its collective numbers: what a landing page and a list show. Aggregates only, no member names. */
+export interface ChallengeSummary {
+  challenge: Challenge;
+  /** The exercise when it is a created one; built-ins come from the catalog. */
+  definition?: Definition;
+  memberCount: number;
+  groupTotal: number;
+}
+
+/** One member's day, cut down on the server to the challenge's exercise. */
+export type ChallengeDay = { day: string } & ExerciseDayTotal;
+
+export interface ChallengeBoardMember {
+  id: string;
+  name: string;
+  isFriend: boolean;
+  days: ChallengeDay[];
+}
+
+/** POST /api/challenges/board: members see each other's names and this exercise's totals in the window, nothing else. */
+export interface ChallengeBoardResponse extends ChallengeSummary {
+  members: ChallengeBoardMember[];
+}
+
+/** POST /api/challenges/list: your challenges, active and past, each with your own link to it. */
+export interface ChallengesResponse {
+  challenges: ChallengeListItem[];
+}
+
+/** POST /api/links/resolve, which needs no account: enough for the landing page to lead with the exercise. */
 export interface ResolvedLink {
   kind: string;
   inviterName: string;
+  challenge?: ChallengeSummary;
 }
 
 /** POST /api/links/redeem, and a sign-up that came through a link. A client that doesn't know `kind` still has the friendship. */
 export interface RedeemedLink {
   kind: string;
   friend: Friend;
+  challenge?: ChallengeSummary;
 }
 
 /** POST /api/signup: the session, plus what the link it came through did. */
@@ -289,4 +332,13 @@ export interface ProfileViewResponse {
   days: BoardDay[];
   exercises: ExerciseSummary[];
   definitions: Definition[];
+}
+
+/** One of your challenges as the list shows it: no group total, which would cost a read per member of each. */
+export interface ChallengeListItem {
+  challenge: Challenge;
+  definition?: Definition;
+  memberCount: number;
+  /** Your own link to it. */
+  link: string;
 }
