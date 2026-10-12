@@ -5,6 +5,7 @@ import { hashToken } from '../src/lambda/auth';
 import { type StoredEntry, MemoryDb } from '../src/lambda/db';
 import { route } from '../src/lambda/http';
 import { CURSOR_LAG_MS, syncEntries, recomputeDayTotal } from '../src/lambda/sync';
+import { type StatsFixtureCase, loadFixture, toEntries } from './fixtures';
 
 const OCT8 = Date.parse('2026-10-08T18:00:00Z');
 const OCT9 = Date.parse('2026-10-09T18:00:00Z');
@@ -134,6 +135,16 @@ describe('syncEntries', () => {
     await syncEntries(db, USER_ID, [makeEntry(OCT8, 5)], 0);
     await Promise.all([recomputeDayTotal(db, USER_ID, '2026-10-08'), syncEntries(db, USER_ID, [makeEntry(OCT8, 6)], 0), recomputeDayTotal(db, USER_ID, '2026-10-08')]);
     expect((await db.getDayTotal(USER_ID, '2026-10-08'))!.reps).toBe(11);
+  });
+});
+
+describe('v1 golden history', () => {
+  it('stores the same day totals it did in v1', async () => {
+    const golden = loadFixture<{ cases: StatsFixtureCase[] }>('stats.json').cases.find((fixtureCase) => fixtureCase.dayTotals)!;
+    const db = new MemoryDb();
+    await syncEntries(db, USER_ID, toEntries(golden.entries), 0);
+    const stored = Object.fromEntries([...db.dayTotals.get(USER_ID)!.values()].map(({ day, reps, sets, bestSetReps }) => [day, { reps, sets, bestSetReps }]));
+    expect(stored).toEqual(golden.dayTotals);
   });
 });
 

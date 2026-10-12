@@ -1,0 +1,95 @@
+{
+  "winners": [
+    {
+      "name": "the newer updatedAt wins",
+      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1 },
+      "b": { "id": "a", "doneAt": 1000, "reps": 7, "updatedAt": 2 },
+      "winner": "b"
+    },
+    {
+      "name": "a delete wins a same-tick tie",
+      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 5 },
+      "b": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 5, "deleted": true },
+      "winner": "b"
+    },
+    {
+      "name": "an older delete loses to a newer edit",
+      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 4, "deleted": true },
+      "b": { "id": "a", "doneAt": 1000, "reps": 6, "updatedAt": 5 },
+      "winner": "b"
+    },
+    {
+      "name": "same tick: more reps wins",
+      "a": { "id": "a", "doneAt": 1000, "reps": 8, "updatedAt": 3 },
+      "b": { "id": "a", "doneAt": 1000, "reps": 6, "updatedAt": 3 },
+      "winner": "a"
+    },
+    {
+      "name": "same tick and reps: more added weight wins",
+      "a": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3 },
+      "b": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10 },
+      "winner": "b"
+    },
+    {
+      "name": "same tick, reps and weight: the later doneAt wins",
+      "a": { "id": "a", "doneAt": 2000, "reps": 5, "updatedAt": 3 },
+      "b": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3 },
+      "winner": "a"
+    },
+    {
+      "name": "a stale copy of a set moved into another month loses",
+      "a": { "id": "s", "doneAt": 1793476800000, "reps": 5, "updatedAt": 1 },
+      "b": { "id": "s", "doneAt": 1793563200000, "reps": 5, "updatedAt": 2 },
+      "winner": "b"
+    }
+  ],
+  "replicas": [
+    {
+      "name": "commutative, associative and idempotent over three replicas",
+      "replicas": [
+        [
+          { "id": "x", "doneAt": 1000, "reps": 5, "updatedAt": 1 },
+          { "id": "y", "doneAt": 1000, "reps": 8, "updatedAt": 3 }
+        ],
+        [
+          { "id": "x", "doneAt": 1000, "reps": 4, "updatedAt": 2 },
+          { "id": "z", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
+        ],
+        [
+          { "id": "y", "doneAt": 1000, "reps": 5, "updatedAt": 3, "deleted": true },
+          { "id": "x", "doneAt": 1000, "reps": 6, "updatedAt": 2 }
+        ]
+      ],
+      "merged": [
+        { "id": "x", "doneAt": 1000, "reps": 6, "updatedAt": 2 },
+        { "id": "y", "doneAt": 1000, "reps": 5, "updatedAt": 3, "deleted": true },
+        { "id": "z", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
+      ]
+    },
+    {
+      "name": "a weight-only difference on the same tick converges",
+      "replicas": [
+        [{ "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10 }],
+        [{ "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3 }]
+      ],
+      "merged": [{ "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 3, "addedWeightLbs": 10 }]
+    }
+  ],
+  "normalize": [
+    {
+      "name": "drops unknown fields",
+      "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "note": "hi" },
+      "normalized": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
+    },
+    {
+      "name": "drops default values",
+      "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 0, "deleted": false },
+      "normalized": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1 }
+    },
+    {
+      "name": "keeps added weight and deletes",
+      "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5, "deleted": true },
+      "normalized": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5, "deleted": true }
+    }
+  ]
+}

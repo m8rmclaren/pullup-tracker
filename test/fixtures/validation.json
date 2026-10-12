@@ -1,0 +1,25 @@
+{
+  "entries": [
+    { "name": "a plain set", "entry": { "id": "ok_1", "doneAt": 1000, "reps": 5, "updatedAt": 1 }, "valid": true },
+    { "name": "a tombstone", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "deleted": true }, "valid": true },
+    { "name": "zero reps", "entry": { "id": "a", "doneAt": 1000, "reps": 0, "updatedAt": 1 }, "valid": false },
+    { "name": "fractional reps", "entry": { "id": "a", "doneAt": 1000, "reps": 4.5, "updatedAt": 1 }, "valid": false },
+    { "name": "reps as a string", "entry": { "id": "a", "doneAt": 1000, "reps": "5", "updatedAt": 1 }, "valid": false },
+    { "name": "no reps", "entry": { "id": "a", "doneAt": 1000, "updatedAt": 1 }, "valid": false },
+    { "name": "a path in the id", "entry": { "id": "../x", "doneAt": 1000, "reps": 5, "updatedAt": 1 }, "valid": false },
+    { "name": "an empty id", "entry": { "id": "", "doneAt": 1000, "reps": 5, "updatedAt": 1 }, "valid": false },
+    { "name": "an id of 65 characters", "entry": { "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "doneAt": 1000, "reps": 5, "updatedAt": 1 }, "valid": false },
+    { "name": "deleted as a string", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "deleted": "yes" }, "valid": false },
+    { "name": "a zero doneAt", "entry": { "id": "a", "doneAt": 0, "reps": 5, "updatedAt": 1 }, "valid": false },
+    { "name": "a fractional updatedAt", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1.5 }, "valid": false },
+    { "name": "added weight in half-pound steps", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 22.5 }, "valid": true },
+    { "name": "added weight at the cap", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 300 }, "valid": true },
+    { "name": "zero added weight (absent means bodyweight)", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 0 }, "valid": false },
+    { "name": "negative added weight", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": -5 }, "valid": false },
+    { "name": "added weight off the half-pound step", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 2.25 }, "valid": false },
+    { "name": "added weight over the cap", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": 301 }, "valid": false },
+    { "name": "added weight as a string", "entry": { "id": "a", "doneAt": 1000, "reps": 5, "updatedAt": 1, "addedWeightLbs": "25" }, "valid": false },
+    { "name": "null", "entry": null, "valid": false },
+    { "name": "an array", "entry": [], "valid": false }
+  ]
+}
