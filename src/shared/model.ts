@@ -5,7 +5,7 @@
 
 export interface Entry {
   id: string;
-  /** When the set was done (epoch ms). Decides which Denver day it counts toward. */
+  /** When the set was done (epoch ms). Decides which day, in the user's zone, it counts toward. */
   doneAt: number;
   reps: number;
   /** Added weight in lb (belt, vest, dumbbell). Absent means bodyweight. */
@@ -122,12 +122,18 @@ export const MAX_PUSHED_ENTRIES = 1000;
 export interface Account {
   id: string;
   name: string;
+  /** IANA zone the account's days are kept in. The server always sends it; an account persisted by an older client may lack it, which means DEFAULT_TIME_ZONE. */
+  timeZone?: string;
 }
 
-/** POST /api/join. `name` is required when the code is a friend invite and ignored for a device link. */
+/**
+ * POST /api/join. `name` is required when the code is a friend invite and ignored for a device link.
+ * `timeZone` is the device's zone, kept as the new account's zone; without it a new account gets DEFAULT_TIME_ZONE.
+ */
 export interface JoinRequest {
   code: string;
   name?: string;
+  timeZone?: string;
 }
 
 export interface JoinResponse {

@@ -8,22 +8,23 @@ interface TrendsProps {
   entries: Entry[];
   stats: Stats;
   now: number;
+  timeZone: string;
   goal: number;
   onOpenDay: (day: string) => void;
 }
 
 const formatOneDecimal = (value: number | null) => (value === null ? '—' : value.toFixed(value >= 100 ? 0 : 1));
 
-export function Trends({ entries, stats, now, goal, onOpenDay }: TrendsProps) {
+export function Trends({ entries, stats, now, timeZone, goal, onOpenDay }: TrendsProps) {
   const [rangeDays, setRangeDays] = useState<30 | 90>(30);
-  const today = dayKey(now);
-  const dayTotals = dailyTotals(entries);
+  const today = dayKey(now, timeZone);
+  const dayTotals = dailyTotals(entries, timeZone);
   const chartDays = dailySeries(dayTotals, today, rangeDays);
   const trailingAverages = trailingAverage(dayTotals, chartDays.map((dayTotal) => dayTotal.day), 7, stats.firstDay);
   const weekOverWeekDelta = stats.weekToDate - stats.lastWeekToDate;
   const historyDays = dailySeries(dayTotals, today, 30).reverse();
   const historyMaxReps = Math.max(goal, ...historyDays.map((dayTotal) => dayTotal.reps));
-  const heaviest = heaviestSet(entries, now);
+  const heaviest = heaviestSet(entries, now, timeZone);
 
   return (
     <div class="trends">
@@ -69,7 +70,7 @@ export function Trends({ entries, stats, now, goal, onOpenDay }: TrendsProps) {
         <header class="card__head">
           <h2>Last 6 months</h2>
         </header>
-        <Heatmap dayTotals={dayTotals} now={now} goal={goal} />
+        <Heatmap dayTotals={dayTotals} today={today} goal={goal} />
       </section>
 
       <section class="card">

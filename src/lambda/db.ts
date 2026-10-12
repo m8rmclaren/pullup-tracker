@@ -5,7 +5,7 @@ export interface StoredEntry extends Entry {
   serverWrittenAt: number;
 }
 
-/** One user's totals for one Denver day, recomputed from entries on every change. */
+/** One user's totals for one day in their zone, recomputed from entries on every change. */
 export interface StoredDayTotal {
   day: string;
   reps: number;
@@ -19,6 +19,8 @@ export interface User {
   id: string;
   name: string;
   createdAt: number;
+  /** Absent on accounts made before zones were per user, which means DEFAULT_TIME_ZONE. */
+  timeZone?: string;
 }
 
 export interface Invite {

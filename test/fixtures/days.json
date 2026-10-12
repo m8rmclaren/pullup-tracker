@@ -12,25 +12,53 @@
     { "name": "the first minute of a year", "at": "2027-01-01T07:00:00Z", "timeZone": "America/Denver", "day": "2027-01-01" },
     { "name": "11:30pm on the night clocks fall back", "at": "2026-11-01T05:30:00Z", "timeZone": "America/Denver", "day": "2026-10-31" },
     { "name": "1:30am in the repeated fall-back hour (first occurrence)", "at": "2026-11-01T07:30:00Z", "timeZone": "America/Denver", "day": "2026-11-01" },
-    { "name": "1:30am in the repeated fall-back hour (second occurrence)", "at": "2026-11-01T08:30:00Z", "timeZone": "America/Denver", "day": "2026-11-01" }
-  ],
-  "wallClockToInstant": [
+    { "name": "1:30am in the repeated fall-back hour (second occurrence)", "at": "2026-11-01T08:30:00Z", "timeZone": "America/Denver", "day": "2026-11-01" },
+    { "name": "London rolls over at 23:00Z in summer (BST, UTC+1)", "at": "2026-10-08T22:59:59Z", "timeZone": "Europe/London", "day": "2026-10-08" },
+    { "name": "London rolls over at 23:00Z in summer (BST, UTC+1)", "at": "2026-10-08T23:00:00Z", "timeZone": "Europe/London", "day": "2026-10-09" },
+    { "name": "London rolls over at UTC midnight in winter (GMT)", "at": "2026-01-15T23:59:59Z", "timeZone": "Europe/London", "day": "2026-01-15" },
+    { "name": "London rolls over at UTC midnight in winter (GMT)", "at": "2026-01-16T00:00:00Z", "timeZone": "Europe/London", "day": "2026-01-16" },
+    { "name": "London's repeated fall-back hour, first occurrence", "at": "2026-10-25T00:30:00Z", "timeZone": "Europe/London", "day": "2026-10-25" },
+    { "name": "London's repeated fall-back hour, second occurrence", "at": "2026-10-25T01:30:00Z", "timeZone": "Europe/London", "day": "2026-10-25" },
+    { "name": "Sydney rolls over at 13:00Z in its summer (AEDT, UTC+11)", "at": "2026-10-08T12:59:59Z", "timeZone": "Australia/Sydney", "day": "2026-10-08" },
+    { "name": "Sydney rolls over at 13:00Z in its summer (AEDT, UTC+11)", "at": "2026-10-08T13:00:00Z", "timeZone": "Australia/Sydney", "day": "2026-10-09" },
+    { "name": "Sydney rolls over at 14:00Z in its winter (AEST, UTC+10)", "at": "2026-07-01T13:59:59Z", "timeZone": "Australia/Sydney", "day": "2026-07-01" },
+    { "name": "Sydney rolls over at 14:00Z in its winter (AEST, UTC+10)", "at": "2026-07-01T14:00:00Z", "timeZone": "Australia/Sydney", "day": "2026-07-02" },
+    { "name": "a Sydney morning is the previous UTC day", "at": "2026-10-07T21:00:00Z", "timeZone": "Australia/Sydney", "day": "2026-10-08" },
+    { "name": "Sydney reaches the new year 13 hours before UTC", "at": "2026-12-31T12:59:00Z", "timeZone": "Australia/Sydney", "day": "2026-12-31" },
+    { "name": "Sydney reaches the new year 13 hours before UTC", "at": "2026-12-31T13:00:00Z", "timeZone": "Australia/Sydney", "day": "2027-01-01" },
+    { "name": "Kolkata rolls over at 18:30Z (IST, UTC+5:30, no DST)", "at": "2026-10-08T18:29:59Z", "timeZone": "Asia/Kolkata", "day": "2026-10-08" },
+    { "name": "Kolkata rolls over at 18:30Z (IST, UTC+5:30, no DST)", "at": "2026-10-08T18:30:00Z", "timeZone": "Asia/Kolkata", "day": "2026-10-09" },
+    { "name": "one instant, four days: Denver", "at": "2026-10-08T23:30:00Z", "timeZone": "America/Denver", "day": "2026-10-08" },
+    { "name": "one instant, four days: London", "at": "2026-10-08T23:30:00Z", "timeZone": "Europe/London", "day": "2026-10-09" },
+    { "name": "one instant, four days: Sydney", "at": "2026-10-08T23:30:00Z", "timeZone": "Australia/Sydney", "day": "2026-10-09" },
+    { "name": "one instant, four days: Kolkata", "at": "2026-10-08T23:30:00Z", "timeZone": "Asia/Kolkata", "day": "2026-10-09" }
+  ], "wallClockToInstant": [
     { "name": "midnight in summer", "day": "2026-10-08", "time": "00:00", "timeZone": "America/Denver", "at": "2026-10-08T06:00:00Z" },
     { "name": "the last minute of a winter day", "day": "2026-01-15", "time": "23:59", "timeZone": "America/Denver", "at": "2026-01-16T06:59:00Z" },
     { "name": "an ordinary afternoon", "day": "2026-07-04", "time": "13:37", "timeZone": "America/Denver", "at": "2026-07-04T19:37:00Z" },
     { "name": "a time skipped by spring-forward moves an hour later", "day": "2026-03-08", "time": "02:30", "timeZone": "America/Denver", "at": "2026-03-08T09:30:00Z" },
-    { "name": "the repeated fall-back hour resolves to its first occurrence", "day": "2026-11-01", "time": "01:30", "timeZone": "America/Denver", "at": "2026-11-01T07:30:00Z" }
-  ],
-  "timeOfDay": [
+    { "name": "the repeated fall-back hour resolves to its first occurrence", "day": "2026-11-01", "time": "01:30", "timeZone": "America/Denver", "at": "2026-11-01T07:30:00Z" },
+    { "name": "London: a time skipped by spring-forward moves an hour later", "day": "2026-03-29", "time": "01:30", "timeZone": "Europe/London", "at": "2026-03-29T01:30:00Z" },
+    { "name": "London: the repeated fall-back hour resolves to its first occurrence", "day": "2026-10-25", "time": "01:30", "timeZone": "Europe/London", "at": "2026-10-25T00:30:00Z" },
+    { "name": "Sydney: a time skipped by spring-forward moves an hour later", "day": "2026-10-04", "time": "02:30", "timeZone": "Australia/Sydney", "at": "2026-10-03T16:30:00Z" },
+    { "name": "Sydney: the repeated fall-back hour resolves to its first occurrence", "day": "2026-04-05", "time": "02:30", "timeZone": "Australia/Sydney", "at": "2026-04-04T15:30:00Z" },
+    { "name": "Kolkata: midnight is the previous UTC evening", "day": "2026-10-08", "time": "00:00", "timeZone": "Asia/Kolkata", "at": "2026-10-07T18:30:00Z" }
+  ], "timeOfDay": [
     { "name": "an ordinary afternoon", "at": "2026-07-04T19:37:00Z", "timeZone": "America/Denver", "time": "13:37" },
     { "name": "just after midnight", "at": "2026-10-08T06:05:00Z", "timeZone": "America/Denver", "time": "00:05" },
-    { "name": "spring-forward lands on 03:30", "at": "2026-03-08T09:30:00Z", "timeZone": "America/Denver", "time": "03:30" }
-  ],
-  "msUntilNextDay": [
+    { "name": "spring-forward lands on 03:30", "at": "2026-03-08T09:30:00Z", "timeZone": "America/Denver", "time": "03:30" },
+    { "name": "Kolkata's half-hour offset", "at": "2026-10-08T19:30:00Z", "timeZone": "Asia/Kolkata", "time": "01:00" },
+    { "name": "Sydney after spring-forward", "at": "2026-10-03T16:30:00Z", "timeZone": "Australia/Sydney", "time": "03:30" },
+    { "name": "London in winter", "at": "2026-01-15T09:15:00Z", "timeZone": "Europe/London", "time": "09:15" }
+  ], "msUntilNextDay": [
     { "name": "spring-forward day is 23 hours", "at": "2026-03-08T07:00:00Z", "timeZone": "America/Denver", "ms": 82800000 },
-    { "name": "fall-back day is 25 hours", "at": "2026-11-01T06:00:00Z", "timeZone": "America/Denver", "ms": 90000000 }
-  ],
-  "addDays": [
+    { "name": "fall-back day is 25 hours", "at": "2026-11-01T06:00:00Z", "timeZone": "America/Denver", "ms": 90000000 },
+    { "name": "London's spring-forward day is 23 hours", "at": "2026-03-29T00:00:00Z", "timeZone": "Europe/London", "ms": 82800000 },
+    { "name": "London's fall-back day is 25 hours", "at": "2026-10-24T23:00:00Z", "timeZone": "Europe/London", "ms": 90000000 },
+    { "name": "Sydney's spring-forward day is 23 hours", "at": "2026-10-03T14:00:00Z", "timeZone": "Australia/Sydney", "ms": 82800000 },
+    { "name": "Sydney's fall-back day is 25 hours", "at": "2026-04-04T13:00:00Z", "timeZone": "Australia/Sydney", "ms": 90000000 },
+    { "name": "Kolkata's days are always 24 hours", "at": "2026-10-08T18:30:00Z", "timeZone": "Asia/Kolkata", "ms": 86400000 }
+  ], "addDays": [
     { "day": "2026-03-07", "days": 1, "result": "2026-03-08" },
     { "day": "2026-03-08", "days": 1, "result": "2026-03-09" },
     { "day": "2026-11-01", "days": 1, "result": "2026-11-02" },
@@ -38,13 +66,11 @@
     { "day": "2026-12-31", "days": 1, "result": "2027-01-01" },
     { "day": "2026-03-01", "days": -1, "result": "2026-02-28" },
     { "day": "2026-10-08", "days": -29, "result": "2026-09-09" }
-  ],
-  "daysBetween": [
+  ], "daysBetween": [
     { "fromDay": "2026-02-28", "toDay": "2026-03-31", "days": 31 },
     { "fromDay": "2026-10-08", "toDay": "2026-10-01", "days": -7 },
     { "fromDay": "2026-10-31", "toDay": "2026-11-02", "days": 2 }
-  ],
-  "startOfWeek": [
+  ], "startOfWeek": [
     { "name": "Thursday to Monday", "day": "2026-10-08", "result": "2026-10-05" },
     { "name": "Sunday to Monday", "day": "2026-10-11", "result": "2026-10-05" },
     { "name": "Monday is its own start", "day": "2026-10-05", "result": "2026-10-05" }

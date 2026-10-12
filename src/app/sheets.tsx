@@ -90,8 +90,8 @@ function WeightPicker({ value, onChange }: { value: number; onChange: (addedWeig
 }
 
 /** Chooses the added weight the quick pad logs with, for the rest of today. */
-export function PadWeightSheet({ tracker, now, onClose }: { tracker: Tracker; now: number; onClose: () => void }) {
-  const today = dayKey(now);
+export function PadWeightSheet({ tracker, now, timeZone, onClose }: { tracker: Tracker; now: number; timeZone: string; onClose: () => void }) {
+  const today = dayKey(now, timeZone);
   const [addedWeightLbs, setAddedWeightLbs] = useState(tracker.padAddedWeightLbs(today));
   return (
     <Sheet title="Added weight" onClose={onClose}>
@@ -124,25 +124,26 @@ interface EntrySheetProps {
   /** For new entries: the starting added weight. */
   defaultAddedWeightLbs?: number;
   now: number;
+  timeZone: string;
   onClose: () => void;
   onLogged?: (entry: Entry) => void;
   onDeleted?: (entry: Entry) => void;
 }
 
-export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeightLbs = 0, now, onClose, onLogged, onDeleted }: EntrySheetProps) {
-  const today = dayKey(now);
-  const initialDay = entry ? dayKey(entry.doneAt) : (day ?? today);
+export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeightLbs = 0, now, timeZone, onClose, onLogged, onDeleted }: EntrySheetProps) {
+  const today = dayKey(now, timeZone);
+  const initialDay = entry ? dayKey(entry.doneAt, timeZone) : (day ?? today);
   const [reps, setReps] = useState(entry?.reps ?? defaultReps);
   const [addedWeightLbs, setAddedWeightLbs] = useState(entry ? (entry.addedWeightLbs ?? 0) : defaultAddedWeightLbs);
   const [date, setDate] = useState(initialDay);
   // Only an explicitly chosen time is converted; "now" keeps second precision and ordering.
-  const [time, setTime] = useState(entry ? timeOfDay(entry.doneAt) : initialDay === today ? timeOfDay(now) : '12:00');
+  const [time, setTime] = useState(entry ? timeOfDay(entry.doneAt, timeZone) : initialDay === today ? timeOfDay(now, timeZone) : '12:00');
   const [isTimeTouched, setIsTimeTouched] = useState(false);
 
   const resolveDoneAt = () => {
-    if (entry) return date === dayKey(entry.doneAt) && time === timeOfDay(entry.doneAt) ? entry.doneAt : wallClockToEpochMs(date, time);
+    if (entry) return date === dayKey(entry.doneAt, timeZone) && time === timeOfDay(entry.doneAt, timeZone) ? entry.doneAt : wallClockToEpochMs(date, time, timeZone);
     if (!isTimeTouched && date === today) return Date.now();
-    return wallClockToEpochMs(date, time);
+    return wallClockToEpochMs(date, time, timeZone);
   };
 
   const save = () => {
@@ -184,7 +185,7 @@ export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeigh
           />
         </label>
       </div>
-      <p class="muted small">Times are Mountain Time (America/Denver).</p>
+      <p class="muted small">Times are in {timeZone.replace(/_/g, ' ')}.</p>
       <div class="sheet__actions">
         {entry ? (
           <button
@@ -207,12 +208,12 @@ export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeigh
   );
 }
 
-export function DaySheet({ tracker, day, goal, onClose, onEdit, onAdd }: { tracker: Tracker; day: string; goal: number; onClose: () => void; onEdit: (entry: Entry) => void; onAdd: () => void }) {
+export function DaySheet({ tracker, day, timeZone, goal, onClose, onEdit, onAdd }: { tracker: Tracker; day: string; timeZone: string; goal: number; onClose: () => void; onEdit: (entry: Entry) => void; onAdd: () => void }) {
   const daySets = tracker
     .allEntries()
-    .filter((entry) => !entry.deleted && dayKey(entry.doneAt) === day)
+    .filter((entry) => !entry.deleted && dayKey(entry.doneAt, timeZone) === day)
     .sort((a, b) => a.doneAt - b.doneAt);
-  const dayTotal = dailyTotals(daySets).get(day);
+  const dayTotal = dailyTotals(daySets, timeZone).get(day);
   return (
     <Sheet title={formatDay(day, { weekday: true, year: true })} onClose={onClose}>
       <p class="day-sum">
@@ -224,7 +225,7 @@ export function DaySheet({ tracker, day, goal, onClose, onEdit, onAdd }: { track
           {daySets.map((entry) => (
             <li key={entry.id}>
               <button type="button" class="set-row" onClick={() => onEdit(entry)}>
-                <span class="set-row__time">{formatClock(entry.doneAt)}</span>
+                <span class="set-row__time">{formatClock(entry.doneAt, timeZone)}</span>
                 <span class="set-row__reps">
                   {entry.reps}
                   {entry.addedWeightLbs ? <em class="set-row__lbs">{formatAddedWeight(entry.addedWeightLbs)}</em> : null}
@@ -272,7 +273,7 @@ export function JoinSheet({ tracker, invite, onClose }: { tracker: Tracker; invi
     setIsBusy(true);
     setError(null);
     try {
-      const response = await join({ code: invite.code, name: isFriendInvite ? name : undefined });
+      const response = await join({ code: invite.code, name: isFriendInvite ? name : undefined, timeZone: tracker.deviceTimeZone });
       tracker.signIn(response.token, response.account);
       void tracker.syncNow();
       onClose();
@@ -400,15 +401,16 @@ export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tra
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const exportDay = dayKey(Date.now());
+  const timeZone = tracker.timeZone();
+  const exportDay = dayKey(Date.now(), timeZone);
   const exportJson = () => downloadFile(`pullups-${exportDay}.json`, 'application/json', JSON.stringify({ version: 1, entries: tracker.allEntries() }, null, 1));
   const exportCsv = () => {
     const rows = tracker
       .allEntries()
       .filter((entry) => !entry.deleted)
       .sort((a, b) => a.doneAt - b.doneAt)
-      .map((entry) => `${dayKey(entry.doneAt)},${timeOfDay(entry.doneAt)},${entry.reps},${entry.addedWeightLbs ?? 0},${new Date(entry.doneAt).toISOString()}`);
-    downloadFile(`pullups-${exportDay}.csv`, 'text/csv', ['day,time_denver,reps,added_lbs,timestamp_utc', ...rows].join('\n'));
+      .map((entry) => `${dayKey(entry.doneAt, timeZone)},${timeOfDay(entry.doneAt, timeZone)},${entry.reps},${entry.addedWeightLbs ?? 0},${new Date(entry.doneAt).toISOString()}`);
+    downloadFile(`pullups-${exportDay}.csv`, 'text/csv', ['day,time_local,reps,added_lbs,timestamp_utc', ...rows].join('\n'));
   };
   const importJson = async (file: File) => {
     try {
@@ -431,7 +433,7 @@ export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tra
         </p>
         {tracker.lastError && tracker.status !== 'synced' ? <p class="muted small">{tracker.lastError}</p> : null}
         <p class="muted small">
-          {tracker.lastSyncAt ? `Last synced ${formatDay(dayKey(tracker.lastSyncAt))} at ${formatClock(tracker.lastSyncAt)}` : 'Never synced from this device'}
+          {tracker.lastSyncAt ? `Last synced ${formatDay(dayKey(tracker.lastSyncAt, timeZone))} at ${formatClock(tracker.lastSyncAt, timeZone)}` : 'Never synced from this device'}
         </p>
         {tracker.settings.token ? (
           <div class="sheet__actions sheet__actions--inline">

@@ -1,4 +1,5 @@
 import { type Entry, type InviteRequest, MAX_PUSHED_ENTRIES, isValidEntry } from '../shared/model';
+import { DEFAULT_TIME_ZONE } from '../shared/time';
 import { createInvite, redeemInvite } from './accounts';
 import { hashToken, isPlausibleSecret } from './auth';
 import type { Db } from './db';
@@ -41,7 +42,7 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
     },
     '/api/join': async (body) => {
       if (!isPlausibleSecret(body.code)) return errorResponse(400, 'That is not an invite link.');
-      const redeemed = await redeemInvite(deps.db, body.code, body.name, clockFrom(deps));
+      const redeemed = await redeemInvite(deps.db, body.code, body.name, body.timeZone, clockFrom(deps));
       return redeemed.ok ? { status: 200, body: { token: redeemed.token, account: redeemed.account } } : errorResponse(redeemed.status, redeemed.error);
     },
   };
@@ -76,6 +77,7 @@ async function sync(userId: string, body: Record<string, unknown>, deps: RouteDe
   if (!Number.isSafeInteger(sinceCursor) || (sinceCursor as number) < 0) return errorResponse(400, 'sinceCursor must be a non-negative integer');
   const user = await deps.db.getUser(userId);
   if (!user) return errorResponse(401, 'This account no longer exists.');
-  const synced = await syncEntries(deps.db, userId, pushedEntries as Entry[], sinceCursor as number, clockFrom(deps));
-  return { status: 200, body: { ...synced, account: { id: user.id, name: user.name } } };
+  const timeZone = user.timeZone ?? DEFAULT_TIME_ZONE;
+  const synced = await syncEntries(deps.db, userId, timeZone, pushedEntries as Entry[], sinceCursor as number, clockFrom(deps));
+  return { status: 200, body: { ...synced, account: { id: user.id, name: user.name, timeZone } } };
 }

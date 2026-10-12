@@ -46,7 +46,7 @@ const EMPTY_RESPONSE: SyncResponse = { entries: [], cursor: 0, account: ACCOUNT 
 /** The server's sync logic for one account, with the request round-tripped through JSON like the wire. */
 const serveSync = async (db: MemoryDb, request: SyncRequest): Promise<SyncResponse> => {
   const wireRequest = JSON.parse(JSON.stringify(request)) as SyncRequest;
-  return { ...(await syncEntries(db, USER_ID, wireRequest.pushedEntries, wireRequest.sinceCursor)), account: ACCOUNT };
+  return { ...(await syncEntries(db, USER_ID, 'America/Denver', wireRequest.pushedEntries, wireRequest.sinceCursor)), account: ACCOUNT };
 };
 const serverTransport = (db: MemoryDb): Transport => (request) => serveSync(db, request);
 const storedEntry = (db: MemoryDb, id: string): Entry | undefined => db.entries.get(USER_ID)?.get(id);
@@ -230,5 +230,20 @@ describe('backoffMs', () => {
   it('doubles from 2s and caps at 5 minutes', () => {
     expect([1, 2, 3].map(backoffMs)).toEqual([2000, 4000, 8000]);
     expect(backoffMs(20)).toBe(300_000);
+  });
+});
+
+describe('Tracker time zone', () => {
+  const db = new MemoryDb();
+  it('keeps days in the account’s zone, Denver for an account from before zones, and the device’s before joining', () => {
+    const storage = new MemoryStorage();
+    const clock = new Clock();
+    const tracker = new Tracker({ storage, transport: serverTransport(db), now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, deviceTimeZone: 'Asia/Kolkata' });
+    expect(tracker.timeZone()).toBe('Asia/Kolkata');
+    tracker.signIn('tok', { id: USER_ID, name: 'Me', timeZone: 'Europe/London' });
+    expect(tracker.timeZone()).toBe('Europe/London');
+    storage.setItem('pullups:v1', JSON.stringify({ version: 1, entries: [], outbox: [], cursor: 5, account: ACCOUNT, settings: { token: 'tok', goal: 35 }, lastSyncAt: null }));
+    const restored = new Tracker({ storage, transport: serverTransport(db), now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, deviceTimeZone: 'Asia/Kolkata' });
+    expect(restored.timeZone()).toBe('America/Denver');
   });
 });

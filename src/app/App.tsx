@@ -28,7 +28,8 @@ const TOAST_DURATION_MS = 5000;
 
 export function App({ tracker }: { tracker: Tracker }) {
   const version = useTracker(tracker);
-  const now = useNow();
+  const timeZone = tracker.timeZone();
+  const now = useNow(timeZone);
   const [tab, setTab] = useState<'today' | 'trends'>('today');
   const [sheet, setSheet] = useState<SheetState>(() => {
     // An opened invite link lands here; the code is taken out of the URL so a reload or a
@@ -43,8 +44,8 @@ export function App({ tracker }: { tracker: Tracker }) {
 
   const entries = useMemo(() => tracker.allEntries(), [tracker, version]);
   const goal = tracker.settings.goal;
-  const stats = useMemo(() => computeStats(entries, now, goal), [entries, now, goal]);
-  const usualSetReps = useMemo(() => usualReps(entries, now), [entries, now]);
+  const stats = useMemo(() => computeStats(entries, now, goal, timeZone), [entries, now, goal, timeZone]);
+  const usualSetReps = useMemo(() => usualReps(entries, now, timeZone), [entries, now, timeZone]);
 
   const showToast = useCallback((text: string, undo: () => void) => {
     clearTimeout(toastTimer.current);
@@ -55,7 +56,8 @@ export function App({ tracker }: { tracker: Tracker }) {
 
   const onLogged = useCallback(
     (entry: Entry) => {
-      const dayLabel = dayKey(entry.doneAt) === dayKey(Date.now()) ? '' : ` on ${formatDay(dayKey(entry.doneAt))}`;
+      const timeZone = tracker.timeZone();
+      const dayLabel = dayKey(entry.doneAt, timeZone) === dayKey(Date.now(), timeZone) ? '' : ` on ${formatDay(dayKey(entry.doneAt, timeZone))}`;
       showToast(`Logged ${entry.reps}${entry.addedWeightLbs ? ` @ ${formatAddedWeight(entry.addedWeightLbs)}` : ''}${dayLabel}`, () => tracker.remove(entry.id));
     },
     [tracker, showToast],
@@ -71,8 +73,8 @@ export function App({ tracker }: { tracker: Tracker }) {
     <div class="app">
       <header class="topbar">
         <div class="topbar__date">
-          <span class="topbar__dow">{formatDay(dayKey(now), { weekday: true }).split(',')[0]}</span>
-          <span>{formatDay(dayKey(now))}</span>
+          <span class="topbar__dow">{formatDay(dayKey(now, timeZone), { weekday: true }).split(',')[0]}</span>
+          <span>{formatDay(dayKey(now, timeZone))}</span>
         </div>
         <button type="button" class={`sync-pill sync-pill--${tracker.status}`} onClick={() => setSheet({ kind: 'settings' })} aria-label="Sync status and settings">
           <i class="dot" />
@@ -89,6 +91,7 @@ export function App({ tracker }: { tracker: Tracker }) {
             tracker={tracker}
             stats={stats}
             now={now}
+            timeZone={timeZone}
             usualSetReps={usualSetReps}
             onLogged={onLogged}
             onEdit={(entry) => setSheet({ kind: 'edit', entry })}
@@ -97,7 +100,7 @@ export function App({ tracker }: { tracker: Tracker }) {
             onOpenPadWeight={() => setSheet({ kind: 'weight' })}
           />
         ) : (
-          <Trends entries={entries} stats={stats} now={now} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
+          <Trends entries={entries} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
         )}
       </main>
 
@@ -132,15 +135,16 @@ export function App({ tracker }: { tracker: Tracker }) {
       </nav>
 
       {sheet?.kind === 'add' ? (
-        <EntrySheet tracker={tracker} day={sheet.day} defaultReps={usualSetReps ?? 5} defaultAddedWeightLbs={tracker.padAddedWeightLbs(dayKey(now))} now={now} onClose={closeSheet} onLogged={onLogged} />
+        <EntrySheet tracker={tracker} day={sheet.day} defaultReps={usualSetReps ?? 5} defaultAddedWeightLbs={tracker.padAddedWeightLbs(dayKey(now, timeZone))} now={now} timeZone={timeZone} onClose={closeSheet} onLogged={onLogged} />
       ) : null}
       {sheet?.kind === 'edit' ? (
-        <EntrySheet tracker={tracker} entry={tracker.getEntry(sheet.entry.id) ?? sheet.entry} defaultReps={sheet.entry.reps} now={now} onClose={closeSheet} onDeleted={onDeleted} />
+        <EntrySheet tracker={tracker} entry={tracker.getEntry(sheet.entry.id) ?? sheet.entry} defaultReps={sheet.entry.reps} now={now} timeZone={timeZone} onClose={closeSheet} onDeleted={onDeleted} />
       ) : null}
       {sheet?.kind === 'day' ? (
         <DaySheet
           tracker={tracker}
           day={sheet.day}
+          timeZone={timeZone}
           goal={goal}
           onClose={closeSheet}
           onEdit={(entry) => setSheet({ kind: 'edit', entry })}
@@ -149,7 +153,7 @@ export function App({ tracker }: { tracker: Tracker }) {
       ) : null}
       {sheet?.kind === 'settings' ? <SettingsSheet tracker={tracker} onClose={closeSheet} onOpenInvite={(invite) => setSheet({ kind: 'join', invite })} /> : null}
       {sheet?.kind === 'join' ? <JoinSheet tracker={tracker} invite={sheet.invite} onClose={closeSheet} /> : null}
-      {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} now={now} onClose={closeSheet} /> : null}
+      {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} now={now} timeZone={timeZone} onClose={closeSheet} /> : null}
     </div>
   );
 }
