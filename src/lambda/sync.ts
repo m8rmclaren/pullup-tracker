@@ -1,4 +1,5 @@
 import { type Entry, type SyncResponse, normalizeEntry, pickWinner, sameVersion } from '../shared/model';
+import { isRingEntry } from '../shared/stats';
 import { addDays, dayKey, wallClockToEpochMs } from '../shared/time';
 import { type Db, type StoredEntry, PreconditionFailed } from './db';
 
@@ -67,11 +68,12 @@ export async function recomputeDayTotal(db: Db, userId: string, day: string, tim
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const stored = await db.getDayTotal(userId, day);
     const liveEntries = (await db.entriesDoneBetween(userId, fromMs, toMs)).filter((entry) => !entry.deleted);
+    const ringEntries = liveEntries.filter((entry) => isRingEntry(entry));
     const dayTotal = {
       day,
-      reps: liveEntries.reduce((reps, entry) => reps + entry.reps, 0),
+      reps: ringEntries.reduce((reps, entry) => reps + entry.reps, 0),
       sets: liveEntries.length,
-      bestSetReps: liveEntries.reduce((bestSetReps, entry) => Math.max(bestSetReps, entry.reps), 0),
+      bestSetReps: ringEntries.reduce((bestSetReps, entry) => Math.max(bestSetReps, entry.reps), 0),
       version: (stored?.version ?? 0) + 1,
     };
     try {

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { type Entry, formatAddedWeight } from '../shared/model';
+import type { Entry } from '../shared/model';
 import { computeStats, usualReps } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
 import { parseInviteLink } from './api';
+import { describeSet } from './labels';
 import { useNow, useTracker } from './hooks';
 import { DaySheet, EntrySheet, JoinSheet, PadWeightSheet, type PendingInvite, SettingsSheet } from './sheets';
 import { Today } from './Today';
@@ -58,11 +59,11 @@ export function App({ tracker }: { tracker: Tracker }) {
     (entry: Entry) => {
       const timeZone = tracker.timeZone();
       const dayLabel = dayKey(entry.doneAt, timeZone) === dayKey(Date.now(), timeZone) ? '' : ` on ${formatDay(dayKey(entry.doneAt, timeZone))}`;
-      showToast(`Logged ${entry.reps}${entry.addedWeightLbs ? ` @ ${formatAddedWeight(entry.addedWeightLbs)}` : ''}${dayLabel}`, () => tracker.remove(entry.id));
+      showToast(`Logged ${describeSet(entry)}${dayLabel}`, () => tracker.remove(entry.id));
     },
     [tracker, showToast],
   );
-  const onDeleted = useCallback((entry: Entry) => showToast(`Deleted set of ${entry.reps}`, () => tracker.restore(entry.id)), [tracker, showToast]);
+  const onDeleted = useCallback((entry: Entry) => showToast(`Deleted set of ${describeSet(entry)}`, () => tracker.restore(entry.id)), [tracker, showToast]);
   const closeSheet = useCallback(() => setSheet(null), []);
 
   useEffect(() => {
@@ -138,7 +139,7 @@ export function App({ tracker }: { tracker: Tracker }) {
         <EntrySheet tracker={tracker} day={sheet.day} defaultReps={usualSetReps ?? 5} defaultAddedWeightLbs={tracker.padAddedWeightLbs(dayKey(now, timeZone))} now={now} timeZone={timeZone} onClose={closeSheet} onLogged={onLogged} />
       ) : null}
       {sheet?.kind === 'edit' ? (
-        <EntrySheet tracker={tracker} entry={tracker.getEntry(sheet.entry.id) ?? sheet.entry} defaultReps={sheet.entry.reps} now={now} timeZone={timeZone} onClose={closeSheet} onDeleted={onDeleted} />
+        <EntrySheet tracker={tracker} entry={tracker.getEntry(sheet.entry.id) ?? sheet.entry} defaultReps={sheet.entry.reps ?? 5} now={now} timeZone={timeZone} onClose={closeSheet} onDeleted={onDeleted} />
       ) : null}
       {sheet?.kind === 'day' ? (
         <DaySheet
@@ -171,6 +172,8 @@ function syncPillText(tracker: Tracker): string {
       return pendingCount ? `Offline · ${pendingCount}` : 'Offline';
     case 'auth':
       return 'Signed out';
+    case 'outdated':
+      return 'Update';
     case 'unconfigured':
       return 'Sign in';
   }

@@ -1,9 +1,10 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type Entry, type InviteKind, MAX_ADDED_WEIGHT_LBS, MAX_NAME_LENGTH, MAX_REPS, MIN_REPS, clampAddedWeight, formatAddedWeight, isValidEntry } from '../shared/model';
+import { type Entry, type InviteKind, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_NAME_LENGTH, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, clampAddedWeight, exerciseIdOf, formatAddedWeight, isValidEntry } from '../shared/model';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallClockToEpochMs } from '../shared/time';
 import { createInvite, inviteLink, join, parseInviteLink } from './api';
+import { exerciseLabel, formatAmount, formatHoldSeconds } from './labels';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
 
@@ -114,6 +115,9 @@ export function PadWeightSheet({ tracker, now, timeZone, onClose }: { tracker: T
   );
 }
 
+const REP_CHIPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15];
+const HOLD_CHIPS_SECONDS = [10, 15, 20, 30, 45, 60, 90, 120];
+
 interface EntrySheetProps {
   tracker: Tracker;
   /** Edit this entry; otherwise create a new one. */
@@ -133,7 +137,8 @@ interface EntrySheetProps {
 export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeightLbs = 0, now, timeZone, onClose, onLogged, onDeleted }: EntrySheetProps) {
   const today = dayKey(now, timeZone);
   const initialDay = entry ? dayKey(entry.doneAt, timeZone) : (day ?? today);
-  const [reps, setReps] = useState(entry?.reps ?? defaultReps);
+  const isHold = entry?.holdSeconds !== undefined;
+  const [amount, setAmount] = useState(entry?.reps ?? entry?.holdSeconds ?? defaultReps);
   const [addedWeightLbs, setAddedWeightLbs] = useState(entry ? (entry.addedWeightLbs ?? 0) : defaultAddedWeightLbs);
   const [date, setDate] = useState(initialDay);
   // Only an explicitly chosen time is converted; "now" keeps second precision and ordering.
@@ -149,20 +154,20 @@ export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeigh
   const save = () => {
     haptic(15);
     if (entry) {
-      tracker.update(entry.id, { reps, addedWeightLbs, doneAt: resolveDoneAt() });
+      tracker.update(entry.id, isHold ? { holdSeconds: amount, addedWeightLbs, doneAt: resolveDoneAt() } : { reps: amount, addedWeightLbs, doneAt: resolveDoneAt() });
     } else {
-      onLogged?.(tracker.add(reps, resolveDoneAt(), addedWeightLbs));
+      onLogged?.(tracker.add(amount, resolveDoneAt(), addedWeightLbs));
     }
     onClose();
   };
 
   return (
-    <Sheet title={entry ? 'Edit set' : 'Log a set'} onClose={onClose}>
-      <Stepper value={reps} onChange={setReps} label="Reps" />
-      <div class="chips" role="group" aria-label="Common rep counts">
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15].map((chipReps) => (
-          <button key={chipReps} type="button" class={`chip${chipReps === reps ? ' is-on' : ''}`} onClick={() => setReps(chipReps)}>
-            {chipReps}
+    <Sheet title={entry ? `Edit set${exerciseLabel(entry) ? ` · ${exerciseLabel(entry)}` : ''}` : 'Log a set'} onClose={onClose}>
+      {isHold ? <Stepper value={amount} onChange={setAmount} min={MIN_HOLD_SECONDS} max={MAX_HOLD_SECONDS} label="Seconds" format={formatHoldSeconds} /> : <Stepper value={amount} onChange={setAmount} label="Reps" />}
+      <div class="chips" role="group" aria-label={isHold ? 'Common hold times' : 'Common rep counts'}>
+        {(isHold ? HOLD_CHIPS_SECONDS : REP_CHIPS).map((chipAmount) => (
+          <button key={chipAmount} type="button" class={`chip${chipAmount === amount ? ' is-on' : ''}`} onClick={() => setAmount(chipAmount)}>
+            {isHold ? formatHoldSeconds(chipAmount) : chipAmount}
           </button>
         ))}
       </div>
@@ -201,7 +206,7 @@ export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeigh
           </button>
         ) : null}
         <button type="button" class="btn btn--primary" onClick={save}>
-          {entry ? 'Save' : `Log ${reps}${addedWeightLbs ? ` @ ${formatAddedWeight(addedWeightLbs)}` : ''}`}
+          {entry ? 'Save' : `Log ${amount}${addedWeightLbs ? ` @ ${formatAddedWeight(addedWeightLbs)}` : ''}`}
         </button>
       </div>
     </Sheet>
@@ -227,7 +232,8 @@ export function DaySheet({ tracker, day, timeZone, goal, onClose, onEdit, onAdd 
               <button type="button" class="set-row" onClick={() => onEdit(entry)}>
                 <span class="set-row__time">{formatClock(entry.doneAt, timeZone)}</span>
                 <span class="set-row__reps">
-                  {entry.reps}
+                  {formatAmount(entry)}
+                  {exerciseLabel(entry) ? <em class="set-row__exercise">{exerciseLabel(entry)}</em> : null}
                   {entry.addedWeightLbs ? <em class="set-row__lbs">{formatAddedWeight(entry.addedWeightLbs)}</em> : null}
                 </span>
                 <span class="set-row__edit muted">Edit</span>
@@ -253,6 +259,7 @@ const STATUS_TEXT: Record<Tracker['status'], string> = {
   pending: 'Changes waiting to sync',
   offline: "Can't reach the server — will retry",
   auth: 'Signed out',
+  outdated: 'This version is too old to sync',
   unconfigured: 'Not signed in — sets stay on this device',
 };
 
@@ -389,6 +396,23 @@ function AccountSection({ tracker, onOpenInvite }: { tracker: Tracker; onOpenInv
   );
 }
 
+/** Fetches the newest service worker, which precaches the new build, then reloads into it. */
+async function reloadIntoLatestVersion(): Promise<void> {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    await registration?.update();
+    const worker = registration?.installing ?? registration?.waiting;
+    if (worker) {
+      const isSettled = () => worker.state === 'activated' || worker.state === 'redundant';
+      await Promise.race([
+        new Promise((resolve) => (isSettled() ? resolve(null) : worker.addEventListener('statechange', () => isSettled() && resolve(null)))),
+        new Promise((resolve) => setTimeout(resolve, 10_000)),
+      ]);
+    }
+  } catch {}
+  location.reload();
+}
+
 export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tracker; onClose: () => void; onOpenInvite: (invite: PendingInvite) => void }) {
   const [dataMessage, setDataMessage] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -409,8 +433,8 @@ export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tra
       .allEntries()
       .filter((entry) => !entry.deleted)
       .sort((a, b) => a.doneAt - b.doneAt)
-      .map((entry) => `${dayKey(entry.doneAt, timeZone)},${timeOfDay(entry.doneAt, timeZone)},${entry.reps},${entry.addedWeightLbs ?? 0},${new Date(entry.doneAt).toISOString()}`);
-    downloadFile(`pullups-${exportDay}.csv`, 'text/csv', ['day,time_local,reps,added_lbs,timestamp_utc', ...rows].join('\n'));
+      .map((entry) => `${dayKey(entry.doneAt, timeZone)},${timeOfDay(entry.doneAt, timeZone)},${entry.reps ?? ''},${entry.addedWeightLbs ?? 0},${new Date(entry.doneAt).toISOString()},${exerciseIdOf(entry)},${entry.holdSeconds ?? ''},${(entry.variationIds ?? []).join(' ')}`);
+    downloadFile(`pullups-${exportDay}.csv`, 'text/csv', ['day,time_local,reps,added_lbs,timestamp_utc,exercise,hold_seconds,variations', ...rows].join('\n'));
   };
   const importJson = async (file: File) => {
     try {
@@ -435,7 +459,13 @@ export function SettingsSheet({ tracker, onClose, onOpenInvite }: { tracker: Tra
         <p class="muted small">
           {tracker.lastSyncAt ? `Last synced ${formatDay(dayKey(tracker.lastSyncAt, timeZone))} at ${formatClock(tracker.lastSyncAt, timeZone)}` : 'Never synced from this device'}
         </p>
-        {tracker.settings.token ? (
+        {tracker.status === 'outdated' ? (
+          <div class="sheet__actions sheet__actions--inline">
+            <button type="button" class="btn btn--primary" onClick={() => void reloadIntoLatestVersion()}>
+              Update now
+            </button>
+          </div>
+        ) : tracker.settings.token ? (
           <div class="sheet__actions sheet__actions--inline">
             <button type="button" class="btn" onClick={() => void tracker.syncNow()}>
               Sync now

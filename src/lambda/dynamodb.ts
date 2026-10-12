@@ -4,7 +4,8 @@ import { type Db, type StoredDayTotal, type Invite, type StoredEntry, type User,
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, timeZone? (absent means America/Denver)
-//   U#<userId>  E#<id>      entry: Entry fields + serverWrittenAt   (LSIs `by-server-written-at` and `by-done-at` index these)
+//   U#<userId>  E#<id>      entry: Entry fields (exerciseId?, variationIds? as a list, reps or holdSeconds, …) + serverWrittenAt
+//                           (LSIs `by-server-written-at` and `by-done-at` index these)
 //   U#<userId>  D#<day>     day total: day, reps, sets, bestSetReps, version, userId; monthPk/monthSk feed GSI `by-month`
 //   T#<hash>    T           device token: userId, createdAt
 //   I#<hash>    I           invite: kind, userId?, createdBy, expiresAt, ttlEpochSeconds (for DynamoDB TTL)
@@ -16,7 +17,11 @@ const DAY_SK_PREFIX = 'D#';
 const MAX_BATCH_GET = 100;
 
 function itemToEntry(item: Record<string, unknown>): StoredEntry {
-  const entry: StoredEntry = { id: item.id as string, doneAt: item.doneAt as number, reps: item.reps as number, updatedAt: item.updatedAt as number, serverWrittenAt: item.serverWrittenAt as number };
+  const entry: StoredEntry = { id: item.id as string, doneAt: item.doneAt as number, updatedAt: item.updatedAt as number, serverWrittenAt: item.serverWrittenAt as number };
+  if (item.exerciseId) entry.exerciseId = item.exerciseId as string;
+  if ((item.variationIds as string[] | undefined)?.length) entry.variationIds = item.variationIds as string[];
+  if (item.reps !== undefined) entry.reps = item.reps as number;
+  if (item.holdSeconds !== undefined) entry.holdSeconds = item.holdSeconds as number;
   if (item.addedWeightLbs) entry.addedWeightLbs = item.addedWeightLbs as number;
   if (item.deleted) entry.deleted = true;
   return entry;

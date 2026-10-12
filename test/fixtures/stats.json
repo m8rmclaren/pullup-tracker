@@ -414,6 +414,102 @@
    ]
   },
   {
+   "name": "the ring sums counted sets in rep-unit exercises only; the pad stats look at pull-ups only",
+   "timeZone": "America/Denver",
+   "goalReps": 35,
+   "entries": [
+    {
+     "id": "m1",
+     "doneAt": "2026-10-08T07:00:00-06:00",
+     "updatedAt": 1,
+     "reps": 8,
+     "addedWeightLbs": 10
+    },
+    {
+     "id": "m2",
+     "doneAt": "2026-10-08T07:10:00-06:00",
+     "updatedAt": 1,
+     "exerciseId": "push-up",
+     "reps": 20,
+     "addedWeightLbs": 45
+    },
+    {
+     "id": "m3",
+     "doneAt": "2026-10-08T07:20:00-06:00",
+     "updatedAt": 1,
+     "exerciseId": "chin-up",
+     "variationIds": [
+      "negative"
+     ],
+     "reps": 5
+    },
+    {
+     "id": "m4",
+     "doneAt": "2026-10-08T07:30:00-06:00",
+     "updatedAt": 1,
+     "exerciseId": "front-lever",
+     "variationIds": [
+      "tuck"
+     ],
+     "holdSeconds": 45
+    },
+    {
+     "id": "m5",
+     "doneAt": "2026-10-08T07:40:00-06:00",
+     "updatedAt": 1,
+     "exerciseId": "plank",
+     "holdSeconds": 90
+    },
+    {
+     "id": "m6",
+     "doneAt": "2026-10-08T07:50:00-06:00",
+     "updatedAt": 1,
+     "exerciseId": "x-k3p7abcdefgh2345",
+     "reps": 3
+    },
+    {
+     "id": "m7",
+     "doneAt": "2026-10-08T08:00:00-06:00",
+     "updatedAt": 1,
+     "exerciseId": "push-up",
+     "reps": 30,
+     "deleted": true
+    }
+   ],
+   "checks": [
+    {
+     "now": "2026-10-08T15:00:00-06:00",
+     "dayTotals": {
+      "2026-10-08": {
+       "reps": 33,
+       "sets": 3
+      }
+     },
+     "stats": {
+      "today": {
+       "day": "2026-10-08",
+       "reps": 33,
+       "sets": 3
+      },
+      "lifetimeReps": 33,
+      "lifetimeSets": 3,
+      "bestDay": {
+       "day": "2026-10-08",
+       "reps": 33,
+       "sets": 3
+      },
+      "streak": 1
+     },
+     "usualReps": 8,
+     "heaviestSet": {
+      "addedWeightLbs": 10,
+      "reps": 8,
+      "day": "2026-10-08"
+     }
+    }
+   ]
+  },
+  {
    "name": "v1 golden history",
    "timeZone": "America/Denver",
    "goalReps": 35,

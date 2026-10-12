@@ -2,6 +2,7 @@ import { useRef, useState } from 'preact/hooks';
 import { type Entry, formatAddedWeight } from '../shared/model';
 import type { Stats } from '../shared/stats';
 import { dayKey, formatClock } from '../shared/time';
+import { describeSet, exerciseLabel, formatAmount } from './labels';
 import { Ring } from './charts';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
@@ -85,8 +86,9 @@ export function Today({ tracker, stats, now, timeZone, usualSetReps, onLogged, o
           <ul class="set-chips">
             {todaysSets.map((entry) => (
               <li key={entry.id}>
-                <button type="button" class="set-chip" onClick={() => onEdit(entry)} aria-label={`${entry.reps} reps${entry.addedWeightLbs ? ` with ${entry.addedWeightLbs} pounds` : ''} at ${formatClock(entry.doneAt, timeZone)}, edit`}>
-                  <b>{entry.reps}</b>
+                <button type="button" class="set-chip" onClick={() => onEdit(entry)} aria-label={`${describeSet(entry)} at ${formatClock(entry.doneAt, timeZone)}, edit`}>
+                  <b>{formatAmount(entry)}</b>
+                  {exerciseLabel(entry) ? <em class="set-chip__exercise">{exerciseLabel(entry)}</em> : null}
                   {entry.addedWeightLbs ? <em class="set-chip__lbs">{formatAddedWeight(entry.addedWeightLbs)}</em> : null}
                   <span>{formatClock(entry.doneAt, timeZone)}</span>
                 </button>

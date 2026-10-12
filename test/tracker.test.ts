@@ -197,6 +197,53 @@ describe('Tracker', () => {
     expect(clock.pending()).toBe(0);
   });
 
+  it('speaks protocol v2, and stops syncing for good when the server turns its version away', async () => {
+    const requests: SyncRequest[] = [];
+    let isOutdated = false;
+    const { tracker, clock } = makeTracker(async (request) => {
+      requests.push(request);
+      if (isOutdated) throw new HttpError(426, 'Update the app to keep syncing.');
+      return serveSync(db, request);
+    });
+    tracker.add(5);
+    await tracker.syncNow();
+    expect(requests[0]!.protocolVersion).toBe(2);
+
+    isOutdated = true;
+    tracker.add(6);
+    clock.timers = [];
+    await tracker.syncNow();
+    expect(tracker.status).toBe('outdated');
+    expect(tracker.lastError).toMatch(/Reload to update/);
+    expect(clock.pending()).toBe(0);
+    tracker.add(7);
+    await tracker.syncNow();
+    expect(requests).toHaveLength(2);
+    expect(tracker.status).toBe('outdated');
+    expect(tracker.pendingCount()).toBe(2);
+  });
+
+  it('editing a set from a newer client keeps the fields this UI doesn’t show', async () => {
+    const chinUp: Entry = { id: 'v2a', doneAt: Date.parse('2026-10-08T15:00:00Z'), updatedAt: 1, exerciseId: 'chin-up', variationIds: ['band', 'negative'], reps: 5 };
+    const lever: Entry = { id: 'v2b', doneAt: Date.parse('2026-10-08T15:05:00Z'), updatedAt: 1, exerciseId: 'front-lever', variationIds: ['tuck'], holdSeconds: 20 };
+    await syncEntries(db, USER_ID, 'America/Denver', [chinUp, lever], 0);
+    const { tracker } = makeTracker(serverTransport(db));
+    await tracker.syncNow();
+
+    tracker.update(chinUp.id, { reps: 6, addedWeightLbs: 10 });
+    tracker.update(lever.id, { holdSeconds: 25, reps: 99, doneAt: lever.doneAt + 60_000 });
+    await tracker.syncNow();
+    expect(storedEntry(db, chinUp.id)).toMatchObject({ exerciseId: 'chin-up', variationIds: ['band', 'negative'], reps: 6, addedWeightLbs: 10 });
+    expect(storedEntry(db, lever.id)).toMatchObject({ exerciseId: 'front-lever', variationIds: ['tuck'], holdSeconds: 25, doneAt: lever.doneAt + 60_000 });
+    expect(storedEntry(db, lever.id)).not.toHaveProperty('reps');
+
+    tracker.remove(lever.id);
+    tracker.restore(lever.id);
+    await tracker.syncNow();
+    expect(storedEntry(db, lever.id)).toMatchObject({ exerciseId: 'front-lever', holdSeconds: 25 });
+    expect(storedEntry(db, lever.id)).not.toHaveProperty('deleted');
+  });
+
   it('never lets a device clock that went backwards lose an edit', () => {
     const { tracker, clock } = makeTracker(async () => EMPTY_RESPONSE);
     const entry = tracker.add(5);
