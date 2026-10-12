@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { type BoardMetric, challengeBoardMembers, evaluateBoard } from '../shared/boards';
 import { allBuiltInExercises, builtInExercise } from '../shared/catalog';
 import { type Definition, type ExerciseDefinition, isVariationDefinition } from '../shared/definitions';
-import type { Challenge, ChallengeBoardResponse, ChallengeListItem } from '../shared/model';
+import type { Challenge, ChallengeBoardResponse, ChallengeListItem, RequestState } from '../shared/model';
 import { addDays, dayKey, daysBetween, formatDay } from '../shared/time';
-import { createChallenge, fetchChallengeBoard, fetchChallengeLink, fetchChallenges, joinLink, leaveChallenge, shareUrl } from './api';
+import { createChallenge, fetchChallengeBoard, fetchChallengeLink, joinLink, leaveChallenge, respondToFriendRequest, sendFriendRequest, shareUrl } from './api';
 import { BoardRows, METRIC_LABELS, formatMetric } from './Board';
 import { QrCode } from './Friends';
 import { Sheet } from './sheets';
@@ -42,16 +42,16 @@ export function GroupProgress({ groupTotal, challenge, exercise }: { groupTotal:
   );
 }
 
+/** "Pull-up, October" or "Red Rocks stairs, Oct 12 – Nov 3": how a request says which challenge it came from. */
+export function challengeLabel(item: ChallengeListItem, tracker: Tracker): string {
+  const name = challengeExercise(item.challenge, item.definition, tracker)?.name ?? 'a challenge';
+  const { fromDay, toDay } = item.challenge;
+  const isWholeMonth = fromDay.endsWith('-01') && addDays(toDay, 1).endsWith('-01') && fromDay.slice(0, 7) === toDay.slice(0, 7);
+  return isWholeMonth ? `${name}, ${new Date(`${fromDay}T12:00:00Z`).toLocaleString('en', { month: 'long', timeZone: 'UTC' })}` : `${name}, ${formatWindow(item.challenge)}`;
+}
+
 /** Your challenges, with a way to start one. */
-export function ChallengesCard({ tracker, onOpenChallenge, onCreate }: { tracker: Tracker; onOpenChallenge: (challengeId: string) => void; onCreate: () => void }) {
-  const [items, setItems] = useState<ChallengeListItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    fetchChallenges(tracker.settings.token).then(
-      (response) => setItems(response.challenges),
-      (fetchError) => setError(fetchError instanceof Error ? fetchError.message : String(fetchError)),
-    );
-  }, [tracker.settings.token]);
+export function ChallengesCard({ tracker, items, error, onOpenChallenge, onCreate }: { tracker: Tracker; items: ChallengeListItem[] | null; error: string | null; onOpenChallenge: (challengeId: string) => void; onCreate: () => void }) {
   const today = dayKey(Date.now(), tracker.timeZone());
 
   return (
@@ -193,6 +193,25 @@ export function ChallengeSheet({ tracker, challengeId, onClose, onLeft, onOpenPr
   const exercise = challengeExercise(board.challenge, board.definition, tracker);
   const url = link ? joinLink(link) : null;
   const friendIds = new Set(board.members.filter((member) => member.isFriend).map((member) => member.id));
+  const requestStates = new Map(board.members.map((member) => [member.id, member.request]));
+  const setMember = (memberId: string, change: { isFriend?: boolean; request?: RequestState }) =>
+    setBoard((current) => current && { ...current, members: current.members.map((member) => (member.id === memberId ? { ...member, ...change } : member)) });
+  const add = async (memberId: string) => {
+    try {
+      const { status } = await sendFriendRequest(memberId, challengeId, token);
+      setMember(memberId, status === 'friends' ? { isFriend: true, request: null } : { request: 'sent' });
+    } catch (requestError) {
+      setNote(requestError instanceof Error ? requestError.message : String(requestError));
+    }
+  };
+  const acceptFrom = async (memberId: string) => {
+    try {
+      await respondToFriendRequest(memberId, true, token);
+      setMember(memberId, { isFriend: true, request: null });
+    } catch (respondError) {
+      setNote(respondError instanceof Error ? respondError.message : String(respondError));
+    }
+  };
   const leave = async () => {
     try {
       await leaveChallenge(challengeId, token);
@@ -216,7 +235,24 @@ export function ChallengeSheet({ tracker, challengeId, onClose, onLeft, onOpenPr
           </button>
         ))}
       </div>
-      <BoardRows rows={rows} metric={metric} exercise={exercise} myId={tracker.account?.id} onOpen={(row) => friendIds.has(row.id) || row.id === tracker.account?.id ? onOpenProfile(row.id) : undefined} />
+      <BoardRows
+        rows={rows}
+        metric={metric}
+        exercise={exercise}
+        myId={tracker.account?.id}
+        onOpen={(row) => (friendIds.has(row.id) || row.id === tracker.account?.id ? onOpenProfile(row.id) : undefined)}
+        renderAction={(row) => {
+          if (row.id === tracker.account?.id || friendIds.has(row.id)) return null;
+          const state = requestStates.get(row.id);
+          if (state === 'sent') return <span class="board__action muted small">Requested</span>;
+          return (
+            <button type="button" class="btn-text board__action" aria-label={`${state === 'received' ? 'Accept' : 'Add'} ${row.name}`} onClick={() => void (state === 'received' ? acceptFrom(row.id) : add(row.id))}>
+              {state === 'received' ? 'Accept' : 'Add'}
+            </button>
+          );
+        }}
+      />
+      <p class="muted small">Add sends a friend request. Friends see each other's profiles and every day; members here only see this exercise.</p>
 
       <h3 class="sheet__subhead">Your link to it</h3>
       {url ? (

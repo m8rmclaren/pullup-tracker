@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { type BoardDay, type BoardMetric, type BoardPeriod, type BoardRow, type BoardSpec, evaluateBoard, requestWindow } from '../shared/boards';
 import { builtInExercise } from '../shared/catalog';
@@ -33,7 +34,17 @@ export function formatMetric(metric: BoardMetric, value: number | null, exercise
   return `${value.toLocaleString()} ${value === 1 ? unit : `${unit}s`}`;
 }
 
-export function BoardRows({ rows, metric, exercise, myId, onOpen }: { rows: BoardRow[]; metric: BoardMetric; exercise: ExerciseInfo | undefined; myId?: string; onOpen?: (row: BoardRow) => void }) {
+interface BoardRowsProps {
+  rows: BoardRow[];
+  metric: BoardMetric;
+  exercise: ExerciseInfo | undefined;
+  myId?: string;
+  onOpen?: (row: BoardRow) => void;
+  /** A control beside a row, such as Add for a member who isn't a friend. */
+  renderAction?: (row: BoardRow) => ComponentChildren;
+}
+
+export function BoardRows({ rows, metric, exercise, myId, onOpen, renderAction }: BoardRowsProps) {
   return (
     <ol class="board">
       {rows.map((row) => (
@@ -43,6 +54,7 @@ export function BoardRows({ rows, metric, exercise, myId, onOpen }: { rows: Boar
             <span class="board__name">{row.id === myId ? `${row.name} (you)` : row.name}</span>
             <span class="board__value">{formatMetric(metric, row.value, exercise)}</span>
           </button>
+          {renderAction?.(row)}
         </li>
       ))}
     </ol>

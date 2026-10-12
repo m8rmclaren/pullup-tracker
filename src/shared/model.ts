@@ -183,7 +183,26 @@ export interface SyncResponse {
   /** Every created definition this account has adopted, plus any the returned entries point at. */
   definitions: Definition[];
   cursor: number;
-  account: Account;
+  account: Account & { incomingRequests?: IncomingRequest[] };
+}
+
+/** A friend request waiting on you, with the challenge you share; declined ones never show. */
+export interface IncomingRequest {
+  id: string;
+  name: string;
+  challengeId: string;
+}
+
+/** Where a friend request stands between you and someone, as you see it. A decline still reads as `sent` to its sender. */
+export type RequestState = 'sent' | 'received' | null;
+
+/** POST /api/friends/suggestions: people from your challenges you aren't friends with. */
+export interface Suggestion {
+  id: string;
+  name: string;
+  /** The most recent challenge you share, which is what a request names. */
+  challengeId: string;
+  request: RequestState;
 }
 
 export const MAX_PUSHED_ENTRIES = 1000;
@@ -282,6 +301,8 @@ export interface ChallengeBoardMember {
   id: string;
   name: string;
   isFriend: boolean;
+  /** For a member who isn't your friend: any request between you. */
+  request: RequestState;
   days: ChallengeDay[];
 }
 

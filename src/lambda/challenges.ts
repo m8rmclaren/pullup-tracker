@@ -8,6 +8,7 @@ import { parseWindow } from './boards';
 import type { ChallengeJoin, Db, StoredDayTotal } from './db';
 import { RequestError } from './errors';
 import { newLink, newLinkCodePair } from './links';
+import { requestStates } from './requests';
 import { type Clock, mapWithConcurrency } from './sync';
 
 /** One bounded fan-out per board: every member's day totals for the window. */
@@ -141,9 +142,12 @@ export async function challengeBoard(db: Db, userId: string, challengeId: unknow
   const challenge = await db.getChallenge(membership.challengeId);
   if (!challenge) throw new RequestError(404, NOT_FOUND);
   const memberIds = (await db.challengeMemberIds(challenge.id)).slice(0, MAX_CHALLENGE_MEMBERS);
-  const [users, friendIds, days, definition] = await Promise.all([db.getUsers(memberIds), db.friendIds(userId), memberDays(db, challenge, memberIds), exerciseDefinition(db, challenge.exerciseId)]);
+  const [users, friendIds, days, definition, stateOf] = await Promise.all([db.getUsers(memberIds), db.friendIds(userId), memberDays(db, challenge, memberIds), exerciseDefinition(db, challenge.exerciseId), requestStates(db, userId)]);
   const friends = new Set(friendIds);
-  const members = [...users.values()].map((member) => ({ id: member.id, name: member.name, isFriend: friends.has(member.id), days: days.get(member.id) ?? [] }));
+  const members = [...users.values()].map((member) => {
+    const isFriend = friends.has(member.id);
+    return { id: member.id, name: member.name, isFriend, request: isFriend || member.id === userId ? null : stateOf(member.id), days: days.get(member.id) ?? [] };
+  });
   const groupTotal = members.flatMap((member) => member.days).reduce((total, day) => total + dayCount(day), 0);
   return { challenge, ...(definition ? { definition } : {}), memberCount: members.length, groupTotal, members };
 }

@@ -1,4 +1,4 @@
-import { type Account, type Entry, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
+import { type Account, type Entry, type IncomingRequest, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
 import { type Measure, builtInExercise, builtInVariation } from '../shared/catalog';
 import { type Definition, type ExerciseDefinition, MAX_PUSHED_DEFINITIONS, type VariationDefinition, definitionKeyOf, definitionKeyString, isVariationDefinition, mergeDefinitionsInto } from '../shared/definitions';
 import { PROFILE_REGISTERS, type ProfilePatch } from '../shared/profile';
@@ -90,8 +90,8 @@ export class Tracker {
   private definitionOutbox = new Set<string>();
   private pendingProfile: ProfilePatch = {};
   private cursor = 0;
-  /** Who this device is signed in as, from the last sync or join. */
-  account: Account | null = null;
+  /** Who this device is signed in as, from the last sync or sign-in, with the friend requests waiting on it. */
+  account: (Account & { incomingRequests?: IncomingRequest[] }) | null = null;
   settings: Settings = { ...DEFAULT_SETTINGS };
   lastSyncAt: number | null = null;
   status: SyncStatus = 'unconfigured';
@@ -166,6 +166,19 @@ export class Tracker {
       if (this.status === 'synced') this.status = 'pending';
       this.scheduleSync();
     }
+    this.persist();
+    this.notifyListeners();
+  }
+
+  /** Friend requests waiting on this account, as of the last sync. */
+  incomingRequestCount(): number {
+    return this.account?.incomingRequests?.length ?? 0;
+  }
+
+  /** Drops an answered request from the copy the last sync left, so the badge clears before the next one. */
+  dismissIncomingRequest(fromUserId: string): void {
+    if (!this.account?.incomingRequests) return;
+    this.account = { ...this.account, incomingRequests: this.account.incomingRequests.filter((request) => request.id !== fromUserId) };
     this.persist();
     this.notifyListeners();
   }

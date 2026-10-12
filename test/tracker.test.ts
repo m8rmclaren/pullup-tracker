@@ -158,7 +158,7 @@ describe('Tracker', () => {
     });
     await tracker.syncNow();
     await tracker.syncNow();
-    expect(tracker.account).toEqual(ACCOUNT);
+    expect(tracker.account).toMatchObject(ACCOUNT);
     tracker.updateSettings({ token: 'another' });
     expect(tracker.account).toBeNull();
     await tracker.syncNow();

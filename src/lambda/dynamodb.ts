@@ -2,7 +2,7 @@ import { ConditionalCheckFailedException, TransactionCanceledException } from '@
 import { BatchGetCommand, type BatchGetCommandOutput, DeleteCommand, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
 import type { Challenge } from '../shared/model';
-import { type ChallengeJoin, type Db, type FriendLink, type Invite, type Link, type Membership, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type ChallengeJoin, type DailyCount, type Db, type FriendLink, type FriendRequest, type Invite, type Link, type Membership, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
@@ -26,6 +26,9 @@ import { type ChallengeJoin, type Db, type FriendLink, type Invite, type Link, t
 //   G#<chId>    M#<userId>  membership from the challenge's side: joinedAt, linkCodeHash
 //   U#<userId>  G#<chId>    the same membership from the user's side, in the same transaction: challengeId, joinedAt, toDay,
 //                           linkCode (the member's own challenge link, readable), linkCodeHash
+//   U#<userId>  R#<fromId>  incoming friend request: challengeId, createdAt, declinedAt? (a decline leaves this as a tombstone)
+//   U#<userId>  S#<toId>    the same request from the sender's side, written in the same transaction: challengeId, createdAt
+//   U#<userId>  RQ#<day>    friend requests sent that day: count, version, ttlEpochSeconds (R# queries can't match it: 'RQ#' ≠ 'R#…')
 //   C#<hash>    C           pending WebAuthn challenge: purpose, userId?, name?, timeZone?, expiresAt, ttlEpochSeconds
 //   W#<day>     U#<userId>  the empty-account sweep looks at this account on <day>
 //   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
@@ -42,6 +45,15 @@ const FRIEND_SK_PREFIX = 'F#';
 const MEMBER_SK_PREFIX = 'M#';
 const MEMBERSHIP_SK_PREFIX = 'G#';
 const challengeKey = (challengeId: string) => ({ pk: `G#${challengeId}`, sk: 'G' });
+const RECEIVED_SK_PREFIX = 'R#';
+const SENT_SK_PREFIX = 'S#';
+const DAILY_COUNT_SK_PREFIX = { requests: 'RQ#' } as const;
+
+function itemToRequest(item: Record<string, unknown>, prefix: string): FriendRequest {
+  const request: FriendRequest = { userId: (item.sk as string).slice(prefix.length), challengeId: item.challengeId as string, createdAt: item.createdAt as number };
+  if (item.declinedAt !== undefined) request.declinedAt = item.declinedAt as number;
+  return request;
+}
 
 function itemToChallenge(item: Record<string, unknown>): Challenge {
   const challenge: Challenge = { id: item.id as string, exerciseId: item.exerciseId as string, fromDay: item.fromDay as string, toDay: item.toDay as string, createdBy: item.createdBy as string, createdAt: item.createdAt as number };
@@ -476,5 +488,89 @@ export class DynamoDb implements Db {
       ProjectionExpression: 'sk',
     });
     return items.map((item) => (item.sk as string).slice(MEMBER_SK_PREFIX.length));
+  }
+
+  private requestKey(userId: string, prefix: string, otherUserId: string) {
+    return { pk: userPartitionKey(userId), sk: prefix + otherUserId };
+  }
+
+  private async getRequest(userId: string, prefix: string, otherUserId: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: this.requestKey(userId, prefix, otherUserId), ConsistentRead: true }));
+    return response.Item ? itemToRequest(response.Item, prefix) : null;
+  }
+
+  async incomingRequests(userId: string) {
+    return (await this.queryUserItems(userId, RECEIVED_SK_PREFIX)).map((item) => itemToRequest(item, RECEIVED_SK_PREFIX));
+  }
+
+  async sentRequests(userId: string) {
+    return (await this.queryUserItems(userId, SENT_SK_PREFIX)).map((item) => itemToRequest(item, SENT_SK_PREFIX));
+  }
+
+  getIncomingRequest(userId: string, fromUserId: string) {
+    return this.getRequest(userId, RECEIVED_SK_PREFIX, fromUserId);
+  }
+
+  getSentRequest(userId: string, toUserId: string) {
+    return this.getRequest(userId, SENT_SK_PREFIX, toUserId);
+  }
+
+  async sendRequest(fromUserId: string, toUserId: string, challengeId: string, createdAt: number) {
+    const transactItems: TransactItems = [
+      { Put: { TableName: this.tableName, Item: { ...this.requestKey(toUserId, RECEIVED_SK_PREFIX, fromUserId), challengeId, createdAt }, ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: { ...this.requestKey(fromUserId, SENT_SK_PREFIX, toUserId), challengeId, createdAt } } },
+    ];
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
+  }
+
+  async putSentRequest(fromUserId: string, { userId, ...request }: FriendRequest) {
+    await this.documentClient.send(new PutCommand({ TableName: this.tableName, Item: { ...this.requestKey(fromUserId, SENT_SK_PREFIX, userId), ...request } }));
+  }
+
+  async declineRequest(userId: string, fromUserId: string, declinedAt: number) {
+    const request = await this.getIncomingRequest(userId, fromUserId);
+    if (!request || request.declinedAt !== undefined) return;
+    try {
+      await mapConditionFailure(
+        this.documentClient.send(
+          new PutCommand({
+            TableName: this.tableName,
+            Item: { ...this.requestKey(userId, RECEIVED_SK_PREFIX, fromUserId), challengeId: request.challengeId, createdAt: request.createdAt, declinedAt },
+            ConditionExpression: 'attribute_exists(pk)',
+          }),
+        ),
+      );
+    } catch (error) {
+      // Accepted or cancelled in between: there's nothing left to decline.
+      if (!(error instanceof PreconditionFailed)) throw error;
+    }
+  }
+
+  async acceptRequest(userId: string, fromUserId: string, createdAt: number) {
+    const transactItems: TransactItems = [...this.friendshipPuts(userId, fromUserId, createdAt)];
+    for (const [receiverId, senderId] of [[userId, fromUserId], [fromUserId, userId]] as const) {
+      transactItems.push({ Delete: { TableName: this.tableName, Key: this.requestKey(receiverId, RECEIVED_SK_PREFIX, senderId) } });
+      transactItems.push({ Delete: { TableName: this.tableName, Key: this.requestKey(senderId, SENT_SK_PREFIX, receiverId) } });
+    }
+    await mapConditionFailure(this.documentClient.send(new TransactWriteCommand({ TransactItems: transactItems })));
+  }
+
+  async cancelRequest(fromUserId: string, toUserId: string) {
+    await this.documentClient.send(new DeleteCommand({ TableName: this.tableName, Key: this.requestKey(fromUserId, SENT_SK_PREFIX, toUserId) }));
+    try {
+      await this.documentClient.send(new DeleteCommand({ TableName: this.tableName, Key: this.requestKey(toUserId, RECEIVED_SK_PREFIX, fromUserId), ConditionExpression: 'attribute_not_exists(declinedAt)' }));
+    } catch (error) {
+      if (!(error instanceof ConditionalCheckFailedException)) throw error;
+    }
+  }
+
+  async getDailyCount(userId: string, kind: 'requests', day: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: DAILY_COUNT_SK_PREFIX[kind] + day }, ConsistentRead: true }));
+    return response.Item ? { count: response.Item.count as number, version: response.Item.version as number } : null;
+  }
+
+  async putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number) {
+    const Item = { pk: userPartitionKey(userId), sk: DAILY_COUNT_SK_PREFIX[kind] + day, ...count, ttlEpochSeconds };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
   }
 }

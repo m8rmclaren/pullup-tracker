@@ -341,4 +341,45 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     expect(await db.getMembership('s9', challenge.id)).toMatchObject({ toDay: '2026-10-31' });
     expect(await db.adoptedDefinitionKeys('s9')).toEqual([]);
   });
+
+  it('keeps both sides of a friend request, a silent tombstone on decline, and one friendship on accept', async () => {
+    await db.sendRequest('ra', 'rb', 'g-x', 10);
+    await expect(db.sendRequest('ra', 'rb', 'g-x', 11)).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.incomingRequests('rb')).toEqual([{ userId: 'ra', challengeId: 'g-x', createdAt: 10 }]);
+    expect(await db.sentRequests('ra')).toEqual([{ userId: 'rb', challengeId: 'g-x', createdAt: 10 }]);
+    // The daily counter shares the R prefix's first letter but never comes back from an R# query.
+    await db.putDailyCount('rb', 'requests', '2026-10-14', { count: 1, version: 1 }, null, 9_999_999_999);
+    expect(await db.incomingRequests('rb')).toHaveLength(1);
+
+    await db.declineRequest('rb', 'ra', 12);
+    expect(await db.getIncomingRequest('rb', 'ra')).toEqual({ userId: 'ra', challengeId: 'g-x', createdAt: 10, declinedAt: 12 });
+    expect(await db.getSentRequest('ra', 'rb')).toEqual({ userId: 'rb', challengeId: 'g-x', createdAt: 10 });
+    await db.cancelRequest('ra', 'rb');
+    expect(await db.getSentRequest('ra', 'rb')).toBeNull();
+    expect(await db.getIncomingRequest('rb', 'ra')).toMatchObject({ declinedAt: 12 });
+    await db.putSentRequest('ra', { userId: 'rb', challengeId: 'g-x', createdAt: 10 });
+    expect(await db.getSentRequest('ra', 'rb')).toEqual({ userId: 'rb', challengeId: 'g-x', createdAt: 10 });
+
+    await db.sendRequest('rc', 'rd', 'g-x', 20);
+    await db.cancelRequest('rc', 'rd');
+    expect(await db.incomingRequests('rd')).toEqual([]);
+
+    await db.sendRequest('re', 'rf', 'g-x', 30);
+    await db.sendRequest('rf', 're', 'g-x', 31);
+    await db.acceptRequest('rf', 're', 32);
+    await expect(db.acceptRequest('rf', 're', 33)).rejects.toBeInstanceOf(PreconditionFailed);
+    expect(await db.isFriend('re', 'rf')).toBe(true);
+    for (const userId of ['re', 'rf']) {
+      expect(await db.incomingRequests(userId)).toEqual([]);
+      expect(await db.sentRequests(userId)).toEqual([]);
+    }
+  });
+
+  it('counts per day only from the version read', async () => {
+    expect(await db.getDailyCount('dc', 'requests', '2026-10-14')).toBeNull();
+    await db.putDailyCount('dc', 'requests', '2026-10-14', { count: 1, version: 1 }, null, 9_999_999_999);
+    await expect(db.putDailyCount('dc', 'requests', '2026-10-14', { count: 1, version: 1 }, null, 9_999_999_999)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.putDailyCount('dc', 'requests', '2026-10-14', { count: 2, version: 2 }, 1, 9_999_999_999);
+    expect(await db.getDailyCount('dc', 'requests', '2026-10-14')).toEqual({ count: 2, version: 2 });
+  });
 });

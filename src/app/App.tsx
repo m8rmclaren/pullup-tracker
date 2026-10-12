@@ -155,6 +155,7 @@ export function App({ tracker }: { tracker: Tracker }) {
           Trends
         </button>
         <button type="button" class={tab === 'friends' ? 'is-on' : ''} aria-current={tab === 'friends'} onClick={() => setTab('friends')}>
+          {tracker.incomingRequestCount() ? <i class="tabbar__badge" aria-label={`${tracker.incomingRequestCount()} friend requests`} /> : null}
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="9" cy="8" r="3.5" />
             <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.2A6.5 6.5 0 0 1 21.5 20" />

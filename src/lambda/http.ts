@@ -8,6 +8,7 @@ import { RequestError } from './errors';
 import { friendsResponse, rotateFriendLink } from './friends';
 import { challengeBoard, challengeLink, createChallenge, leaveChallenge, listChallenges } from './challenges';
 import { redeemLink, resolveLink } from './redeem';
+import { cancelRequest, incomingRequestsFor, respondToRequest, sendRequest, suggestions } from './requests';
 import { type WebAuthnConfig, finishLogin, finishRegister, finishSignup, listPasskeys, startLogin, startRegister, startSignup } from './passkeys';
 import { accountOf, updateProfile } from './profile';
 import { hashToken, isPlausibleSecret } from './auth';
@@ -95,6 +96,10 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
       await deps.db.unfriend(userId, body.friendId);
       return ok({});
     }),
+    '/api/friends/request': signedIn(async (userId, body) => ok(await sendRequest(deps.db, userId, body, clock))),
+    '/api/friends/respond': signedIn(async (userId, body) => ok(await respondToRequest(deps.db, userId, body, clock))),
+    '/api/friends/cancel': signedIn(async (userId, body) => ok(await cancelRequest(deps.db, userId, body))),
+    '/api/friends/suggestions': signedIn(async (userId) => ok({ suggestions: await suggestions(deps.db, userId) })),
     '/api/friends/rotate-link': signedIn(async (userId) => ok({ friendLink: await rotateFriendLink(deps.db, userId, clock) })),
     '/api/challenges/create': signedIn(async (userId, body) => ok(await createChallenge(deps.db, userId, body, clock))),
     '/api/challenges/list': signedIn(async (userId) => ok({ challenges: await listChallenges(deps.db, userId, clock) })),
@@ -159,6 +164,6 @@ async function sync(userId: string, body: Record<string, unknown>, deps: RouteDe
   const mismatched = await findMeasureMismatch(deps.db, pushedEntries as Entry[]);
   if (mismatched) return errorResponse(400, `entry ${mismatched.id} doesn't match its exercise's measure`);
   const synced = await syncEntries(deps.db, userId, timeZone, pushedEntries as Entry[], sinceCursor as number, clock);
-  const definitions = await definitionsForSync(deps.db, userId, pushedEntries as Entry[], synced.entries, clock);
-  return { status: 200, body: { ...synced, definitions, account } };
+  const [definitions, incomingRequests] = await Promise.all([definitionsForSync(deps.db, userId, pushedEntries as Entry[], synced.entries, clock), incomingRequestsFor(deps.db, userId)]);
+  return { status: 200, body: { ...synced, definitions, account: { ...account, incomingRequests } } };
 }
