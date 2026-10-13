@@ -123,19 +123,26 @@ final class AppModel {
         return created.sorted { $0.name < $1.name } + builtIns
     }
 
-    var stats: Stats {
-        computeStats(entries, nowMs: nowMs, goalReps: goalReps, calendar: calendar) { [definitionsByKey] exerciseId in
+    /// Built-in and created exercises' units, for the ring's stats.
+    var unitLookup: UnitLookup {
+        { [definitionsByKey] exerciseId in
             if let builtIn = Catalog.exercise(exerciseId) { return builtIn.unit }
             guard case .exercise(let created)? = definitionsByKey[exerciseId] else { return nil }
             return created.unit
         }
     }
 
-    var todaysSets: [Entry] {
-        let calendar = calendar
-        let today = today
-        return entries.filter { !$0.isDeleted && calendar.dayKey(at: $0.doneAt) == today }.sorted { $0.doneAt > $1.doneAt }
+    var stats: Stats {
+        computeStats(entries, nowMs: nowMs, goalReps: goalReps, calendar: calendar, unitOf: unitLookup)
     }
+
+    /// A day's live sets, newest first.
+    func sets(on day: String) -> [Entry] {
+        let calendar = calendar
+        return entries.filter { !$0.isDeleted && calendar.dayKey(at: $0.doneAt) == day }.sorted { $0.doneAt > $1.doneAt }
+    }
+
+    var todaysSets: [Entry] { sets(on: today) }
 
     func formattedAmount(_ entry: Entry) -> String {
         entry.formattedAmount { [self] in unit(of: $0) }
