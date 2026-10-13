@@ -52,6 +52,13 @@ public struct ExerciseInfo: Hashable, Sendable {
     public var measure: Measure
     public var unit: String?
     public var description: String?
+
+    public init(name: String, measure: Measure, unit: String? = nil, description: String? = nil) {
+        self.name = name
+        self.measure = measure
+        self.unit = unit
+        self.description = description
+    }
 }
 
 public func backoffMs(consecutiveFailures: Int) -> Int64 {

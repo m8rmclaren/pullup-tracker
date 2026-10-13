@@ -34,6 +34,15 @@ public final class SQLiteReplicaStore: ReplicaStore {
         public var description: String { "no container for App Group \(groupIdentifier); check the entitlement" }
     }
 
+    /// Releases the file's locks before the app is suspended; call after the last write.
+    public static func suspendForBackground() {
+        NotificationCenter.default.post(name: Database.suspendNotification, object: nil)
+    }
+
+    public static func resumeFromBackground() {
+        NotificationCenter.default.post(name: Database.resumeNotification, object: nil)
+    }
+
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in

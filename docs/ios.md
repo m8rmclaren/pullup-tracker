@@ -152,6 +152,15 @@ phone come from Xcode Cloud, which chooses its Xcode version in the cloud. App S
 Connect only accepts builds made with a recent SDK, and Xcode 16.4 may not install to a
 phone running a newer iOS than it knows.
 
+**Running it.** From `ios/`, `xcodegen generate` writes `Pullups.xcodeproj`; open it, or
+build with `xcodebuild -project Pullups.xcodeproj -scheme Pullups -destination
+'platform=iOS Simulator,name=iPhone 16'`. Debug talks to `npm run dev` on
+`http://localhost:5173`. Override it with `API_BASE_URL=http://localhost:<port>` on the
+`xcodebuild` line when the dev server lands on another port. Sign the Simulator in with the
+device link the dev server prints. Passkeys need the real domain's AASA, so they work only
+on a device build with a Team ID. The bundle id is `com.haydenroszell.pullups`, and the App
+Group is `group.com.haydenroszell.pullups`.
+
 **Release.**
 - Xcode Cloud builds and uploads to TestFlight on pushes to `main` that touch `ios/`.
   Signing stays with Apple.

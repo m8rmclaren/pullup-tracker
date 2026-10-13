@@ -12,3 +12,6 @@ infra/.terraform.lock.hcl
 .build/
 .swiftpm/
 .DS_Store
+ios/*.xcodeproj/
+ios/App/Info.plist
+ios/App/Pullups.entitlements
