@@ -1,5 +1,5 @@
 import { builtInVariation, isCreatedVariationId } from './catalog';
-import { type Entry, exerciseIdOf } from './model';
+import { type Entry, MAX_VARIATIONS, exerciseIdOf } from './model';
 import { addDays, dayKey } from './time';
 
 // What the Today pad offers, derived from history: the exercise and configuration to prefill,
@@ -82,12 +82,14 @@ export function lastContextFor(entries: Iterable<Entry>, exerciseId: string): Se
 
 /**
  * Turns a variation on or off. A built-in variation is at most one per group, so turning one on
- * turns off any other from its group. Created variations have no group.
+ * turns off any other from its group. Created variations have no group. A set holds at most
+ * MAX_VARIATIONS, so turning on one more past that changes nothing.
  */
 export function toggleVariation(variationIds: string[], variationId: string): string[] {
   if (variationIds.includes(variationId)) return variationIds.filter((id) => id !== variationId);
   const group = isCreatedVariationId(variationId) ? undefined : builtInVariation(variationId)?.group;
   const kept = group ? variationIds.filter((id) => isCreatedVariationId(id) || builtInVariation(id)?.group !== group) : variationIds;
+  if (kept.length >= MAX_VARIATIONS) return variationIds;
   return [...kept, variationId].sort();
 }
 

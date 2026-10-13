@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
-import { type DraftItem, type ResolvedDraft, MAX_COMPOSE_TEXT_LENGTH, resolveDraft } from '../shared/compose';
+import { isCreatedExerciseId } from '../shared/catalog';
+import { type DraftItem, type ResolvedDraft, MAX_COMPOSE_TEXT_LENGTH, MAX_KNOWN_EXERCISES, resolveDraft } from '../shared/compose';
 import { MAX_DEFINITION_NAME_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_UNIT_LENGTH, isVariationDefinition } from '../shared/definitions';
 import { MAX_HOLD_SECONDS, MAX_REPS, MAX_VARIATIONS, cleanName, formatAddedWeight } from '../shared/model';
 import { formatClock } from '../shared/time';
@@ -26,7 +27,9 @@ export function DescribeSheet({ tracker, onClose, onLoggedAll }: { tracker: Trac
     setIsBusy(true);
     setNote(null);
     try {
-      const known = knownExercises(tracker);
+      // Built-ins first, so an account past the cap still sends them all.
+      const all = knownExercises(tracker);
+      const known = [...all.filter((exercise) => !isCreatedExerciseId(exercise.id)), ...all.filter((exercise) => isCreatedExerciseId(exercise.id))].slice(0, MAX_KNOWN_EXERCISES);
       const nowMs = Date.now();
       const response = await composeDraft({ text: text.trim(), nowMs, timeZone, knownExercises: known }, token);
       if (!response.draft || !response.draft.sets.length) {

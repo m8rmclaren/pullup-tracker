@@ -43,6 +43,12 @@ describe('toggleVariation', () => {
     expect(toggleVariation(['negative', 'wide-grip'], 'wide-grip')).toEqual(['negative']);
   });
 
+  it('holds at most six, so a set never fails validation', () => {
+    const six = ['v-aaaaaaaaaaaaaaaa', 'v-bbbbbbbbbbbbbbbb', 'v-cccccccccccccccc', 'v-dddddddddddddddd', 'v-eeeeeeeeeeeeeeee', 'wide-grip'];
+    expect(toggleVariation(six, 'v-ffffffffffffffff')).toEqual(six);
+    expect(toggleVariation(six, 'close-grip')).toEqual([...six.slice(0, 5), 'close-grip'].sort());
+  });
+
   it('lets created variations sit beside anything', () => {
     expect(toggleVariation(['tuck', 'v-aaaaaaaaaaaaaaaa'], 'v-bbbbbbbbbbbbbbbb')).toEqual(['tuck', 'v-aaaaaaaaaaaaaaaa', 'v-bbbbbbbbbbbbbbbb']);
   });

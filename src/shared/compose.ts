@@ -1,4 +1,4 @@
-import { type Measure, allBuiltInVariations } from './catalog';
+import { type Measure, allBuiltInVariations, builtInExercise } from './catalog';
 import { MAX_DEFINITION_NAME_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_UNIT_LENGTH } from './definitions';
 import { MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_REPS, MAX_VARIATIONS, MIN_HOLD_SECONDS, MIN_REPS } from './model';
 import { type NamedItem, matchName, nameKey } from './names';
@@ -159,7 +159,10 @@ export function resolveDraft(draft: ComposedDraft, known: KnownExercise[], varia
       measure = proposal.measure;
     }
 
-    const knownVariations = item.exerciseId ? [...variationsOf(item.exerciseId), ...allBuiltInVariations()] : allBuiltInVariations();
+    // A built-in exercise takes built-in variations from its own groups only, as the picker offers them.
+    const groups = item.exerciseId ? builtInExercise(item.exerciseId)?.variationGroups : undefined;
+    const builtIns = allBuiltInVariations().filter((variation) => !groups || groups.includes(variation.group));
+    const knownVariations = item.exerciseId ? [...variationsOf(item.exerciseId), ...builtIns] : builtIns;
     for (const variationName of set.variations) {
       const variation = matchName(variationName, knownVariations);
       if (variation) item.variationIds = toggleVariation(item.variationIds, variation.id);

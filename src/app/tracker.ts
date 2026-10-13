@@ -1,4 +1,4 @@
-import { type Account, type Entry, type IncomingRequest, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
+import { type Account, type Entry, type IncomingRequest, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MAX_VARIATIONS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
 import { type Measure, PULL_UP, builtInExercise, builtInVariation } from '../shared/catalog';
 import { type Definition, type ExerciseDefinition, MAX_PUSHED_DEFINITIONS, type VariationDefinition, definitionKeyOf, definitionKeyString, isVariationDefinition, mergeDefinitionsInto } from '../shared/definitions';
 import { PROFILE_REGISTERS, type ProfilePatch } from '../shared/profile';
@@ -270,7 +270,9 @@ export class Tracker {
 
   /** Logs one set of any exercise: `reps` for a counted one, `holdSeconds` for a timed one. */
   log(set: { exerciseId?: string; variationIds?: string[]; reps?: number; holdSeconds?: number; doneAt?: number; addedWeightLbs?: number }): Entry {
-    const entry = { id: this.newId(), doneAt: set.doneAt ?? this.now(), updatedAt: this.now(), exerciseId: set.exerciseId, variationIds: set.variationIds, addedWeightLbs: clampAddedWeight(set.addedWeightLbs ?? 0) } as Entry;
+    // More variations than a set may hold would be refused by the server and wedge the outbox.
+    const variationIds = set.variationIds ? [...new Set(set.variationIds)].slice(0, MAX_VARIATIONS) : undefined;
+    const entry = { id: this.newId(), doneAt: set.doneAt ?? this.now(), updatedAt: this.now(), exerciseId: set.exerciseId, variationIds, addedWeightLbs: clampAddedWeight(set.addedWeightLbs ?? 0) } as Entry;
     if (set.holdSeconds !== undefined) entry.holdSeconds = clampHoldSeconds(set.holdSeconds);
     else entry.reps = clampReps(set.reps ?? MIN_REPS);
     const normalized = normalizeEntry(entry);

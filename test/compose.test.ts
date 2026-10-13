@@ -71,6 +71,12 @@ describe('POST /api/compose', () => {
     expect(await db.getDailyCount('ama', 'compose', '2026-10-08')).toEqual({ count: 1, version: 1 });
   });
 
+  it('counts a failed call toward the month at its worst case', async () => {
+    const { db, post } = setup({ compose: async () => Promise.reject(new Error('timed out')) });
+    expect((await post()).status).toBe(503);
+    expect(await db.getComposeSpend('2026-10')).toEqual({ spentMicroUsd: 1424, version: 1 });
+  });
+
   it('answers null for anything that is not a draft', async () => {
     const { post } = setup({ compose: async () => ({ draft: { sets: [{ exercise: 'Pull-up', reps: 8 }] }, inputTokens: 1, outputTokens: 1 }) });
     expect(await post()).toEqual({ status: 200, body: { draft: null } });

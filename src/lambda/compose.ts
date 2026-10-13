@@ -36,6 +36,9 @@ export const MAX_COMPOSES_PER_DAY = 30;
 export const COMPOSE_TIMEOUT_MS = 5000;
 const MAX_ATTEMPTS = 8;
 const SPEND_ATTEMPTS = 3;
+/** What a failed call is assumed to have cost: a long prompt and the whole output budget (max_tokens in bedrock.ts). */
+const FAILED_CALL_INPUT_TOKENS = 4000;
+const FAILED_CALL_OUTPUT_TOKENS = 2048;
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -99,6 +102,8 @@ export async function compose(db: Db, userId: string, body: Record<string, unkno
     output = await config.composer.compose(input, AbortSignal.timeout(COMPOSE_TIMEOUT_MS));
   } catch (error) {
     console.error(`composing a draft for ${userId} failed`, error);
+    // A call that timed out may still be billed, so it counts toward the ceiling at its worst case.
+    await recordSpend(db, month, Math.ceil(FAILED_CALL_INPUT_TOKENS * config.inputUsdPerMillionTokens + FAILED_CALL_OUTPUT_TOKENS * config.outputUsdPerMillionTokens)).catch((spendError) => console.error(`recording compose spend for ${month} failed`, spendError));
     throw new RequestError(503, "Couldn't reach Describe just now. The pad still works.");
   }
 

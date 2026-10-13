@@ -376,6 +376,8 @@ describe('Tracker', () => {
     const copy = tracker.logTemplate({ exerciseId: 'plank', variationIds: [], holdSeconds: 45 });
     expect(copy).toMatchObject({ exerciseId: 'plank', holdSeconds: 45 });
     expect('variationIds' in copy).toBe(false);
+    const crowded = tracker.log({ reps: 3, variationIds: ['v-aaaaaaaaaaaaaaaa', 'v-bbbbbbbbbbbbbbbb', 'v-cccccccccccccccc', 'v-dddddddddddddddd', 'v-eeeeeeeeeeeeeeee', 'v-ffffffffffffffff', 'v-gggggggggggggggg'] });
+    expect(crowded.variationIds).toHaveLength(6);
   });
 });
 

@@ -424,6 +424,40 @@
    }
   },
   {
+   "name": "a built-in variation from another exercise's group is new, not borrowed",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Push-up",
+      "variations": [
+       "Tuck",
+       "Close grip"
+      ],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 10
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [
+       "close-grip"
+      ],
+      "newVariations": [
+       "Tuck"
+      ],
+      "exerciseId": "push-up",
+      "reps": 10,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
    "name": "relative times: this time yesterday, and added weight",
    "draft": {
     "sets": [
