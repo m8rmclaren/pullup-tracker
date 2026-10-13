@@ -103,7 +103,9 @@ struct TodayView: View {
                     .accessibilityLabel("Settings")
             }
         }
-        .overlay(alignment: .bottom) { undoToast }
+        // At the top, over the ring: a tap meant for Undo that lands just after the toast goes
+        // must not hit Log or a repeat chip, which sit at the bottom.
+        .overlay(alignment: .top) { undoToast }
         .sensoryFeedback(.impact(weight: .medium), trigger: logCount)
         .onChange(of: context) { chosenAmount = nil }
         .sheet(item: $sheet) { sheet in
@@ -282,10 +284,10 @@ struct TodayView: View {
             .frame(minHeight: 48)
             .background(.thickMaterial, in: .capsule)
             .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .padding(.top, 8)
+            .transition(.move(edge: .top).combined(with: .opacity))
             .task(id: logged.id) {
-                try? await Task.sleep(for: .seconds(4))
+                try? await Task.sleep(for: .seconds(5))
                 if model.justLogged?.id == logged.id { model.dismissUndo() }
             }
         }

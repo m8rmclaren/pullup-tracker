@@ -29,13 +29,14 @@ struct ExercisePickerView: View {
                             dismiss()
                         } label: {
                             HStack {
-                                Text(exercise.name).foregroundStyle(.primary)
+                                Text(exercise.name)
                                 Spacer()
                                 Text(exercise.measure == .time ? "timed" : exercise.unit == Catalog.ringUnit ? "reps" : "\(exercise.unit ?? "")s")
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .tint(.primary)
                     }
                 }
             }
@@ -60,8 +61,9 @@ struct NewExerciseView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var measure = Measure.count
-    @State private var unit = "rep"
+    @State private var unit = ""
     @State private var description = ""
+    @State private var isSaving = false
 
     init(model: AppModel, initialName: String, onCreated: @escaping (String) -> Void) {
         self.model = model
@@ -70,7 +72,8 @@ struct NewExerciseView: View {
     }
 
     private var cleanedName: String? { cleanName(name, maxLength: DefinitionLimits.maxNameLength) }
-    private var cleanedUnit: String? { cleanName(unit.lowercased(), maxLength: DefinitionLimits.maxUnitLength) }
+    /// Left empty, a count is in reps.
+    private var cleanedUnit: String? { unit.isEmpty ? Catalog.ringUnit : cleanName(unit.lowercased(), maxLength: DefinitionLimits.maxUnitLength) }
     private var existing: KnownExercise? { matchName(name, in: model.allExercises) }
 
     var body: some View {
@@ -78,7 +81,7 @@ struct NewExerciseView: View {
             Form {
                 Section {
                     TextField("Name, like Red Rocks stairs", text: $name)
-                    if let existing {
+                    if let existing, !isSaving {
                         Text("You already have **\(existing.name)**. Logging to it keeps everyone on one board.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -91,7 +94,7 @@ struct NewExerciseView: View {
                     }
                     .pickerStyle(.segmented)
                     if measure == .count {
-                        TextField("One count is a… (rep, lap, flight)", text: $unit)
+                        TextField("rep", text: $unit, prompt: Text("rep (or lap, flight…)"))
                             .textInputAutocapitalization(.never)
                     }
                 }
@@ -105,7 +108,7 @@ struct NewExerciseView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") { create() }
-                        .disabled(cleanedName == nil || (measure == .count && cleanedUnit == nil))
+                        .disabled(cleanedName == nil || (measure == .count && cleanedUnit == nil) || isSaving)
                 }
             }
         }
@@ -113,6 +116,7 @@ struct NewExerciseView: View {
 
     private func create() {
         guard let cleanedName else { return }
+        isSaving = true
         let unit = measure == .count ? cleanedUnit : nil
         let description = description.isEmpty ? nil : cleanName(description, maxLength: DefinitionLimits.maxDescriptionLength)
         Task {
@@ -153,11 +157,12 @@ struct VariationPickerView: View {
                     ForEach(model.variations(of: context.exerciseId), id: \.id) { variation in
                         Button { toggle(variation.id) } label: {
                             HStack {
-                                Text(variation.name).foregroundStyle(.primary)
+                                Text(variation.name)
                                 Spacer()
                                 if context.variationIds.contains(variation.id) { Image(systemName: "checkmark").foregroundStyle(Color.brand) }
                             }
                         }
+                        .tint(.primary)
                     }
                 }
             }
