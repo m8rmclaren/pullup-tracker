@@ -19,6 +19,15 @@ public struct DeviceSettings: Codable, Hashable, Sendable {
     public var padContext: SetContext?
 
     public init() {}
+
+    // A field added later reads as its default from state saved before it existed.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        goalReps = try container.decodeIfPresent(Int.self, forKey: .goalReps) ?? Self.defaultGoalReps
+        padAddedWeightDay = try container.decodeIfPresent(String.self, forKey: .padAddedWeightDay) ?? ""
+        padAddedWeightsLbs = try container.decodeIfPresent([String: Double].self, forKey: .padAddedWeightsLbs) ?? [:]
+        padContext = try container.decodeIfPresent(SetContext.self, forKey: .padContext)
+    }
 }
 
 /// Everything in the replica besides entries, definitions and their outboxes.
@@ -34,6 +43,17 @@ public struct ReplicaState: Codable, Hashable, Sendable {
     public var settings = DeviceSettings()
 
     public init() {}
+
+    // A field added later reads as its default from state saved before it existed.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        token = try container.decodeIfPresent(String.self, forKey: .token) ?? ""
+        cursor = try container.decodeIfPresent(Int64.self, forKey: .cursor) ?? 0
+        account = try container.decodeIfPresent(Account.self, forKey: .account)
+        pendingProfile = try container.decodeIfPresent(ProfilePatch.self, forKey: .pendingProfile) ?? ProfilePatch()
+        lastSyncAtMs = try container.decodeIfPresent(Int64.self, forKey: .lastSyncAtMs)
+        settings = try container.decodeIfPresent(DeviceSettings.self, forKey: .settings) ?? DeviceSettings()
+    }
 }
 
 public protocol ReplicaReader {

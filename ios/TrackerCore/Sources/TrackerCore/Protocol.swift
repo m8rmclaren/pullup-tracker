@@ -8,6 +8,12 @@ public struct IncomingRequest: Codable, Hashable, Sendable {
     public var id: String
     public var name: String
     public var challengeId: String
+
+    public init(id: String, name: String, challengeId: String) {
+        self.id = id
+        self.name = name
+        self.challengeId = challengeId
+    }
 }
 
 /// The signed-in profile, as /api/sync, /api/profile and every sign-in return it. Each editable

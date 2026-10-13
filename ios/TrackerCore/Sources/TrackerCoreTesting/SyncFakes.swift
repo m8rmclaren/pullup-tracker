@@ -1,43 +1,45 @@
 import Foundation
-@testable import TrackerCore
+import TrackerCore
 
 /// A value tests can change while the engine reads it from another task.
-final class Locked<Value>: @unchecked Sendable {
+public final class Locked<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Value
 
-    init(_ value: Value) {
+    public init(_ value: Value) {
         self.value = value
     }
 
-    var current: Value {
+    public var current: Value {
         get { lock.withLock { value } }
         set { lock.withLock { value = newValue } }
     }
 
-    func update<T>(_ change: (inout Value) -> T) -> T {
+    public func update<T>(_ change: (inout Value) -> T) -> T {
         lock.withLock { change(&value) }
     }
 }
 
 /// Holds timers until a test fires them, so the debounce and backoff are checked without waiting.
-final class ManualScheduler: SyncScheduler {
-    struct Timer {
-        let id: Int
-        let delayMs: Int64
-        let action: @Sendable () async -> Void
+public final class ManualScheduler: SyncScheduler {
+    public struct Timer: Sendable {
+        public let id: Int
+        public let delayMs: Int64
+        public let action: @Sendable () async -> Void
     }
 
     private let timers = Locked<[Timer]>([])
     private let nextId = Locked(0)
 
-    var pending: [Timer] { timers.current }
+    public init() {}
 
-    func clear() {
+    public var pending: [Timer] { timers.current }
+
+    public func clear() {
         timers.current = []
     }
 
-    func schedule(afterMs delayMs: Int64, _ action: @escaping @Sendable () async -> Void) -> any ScheduledSync {
+    public func schedule(afterMs delayMs: Int64, _ action: @escaping @Sendable () async -> Void) -> any ScheduledSync {
         let id = nextId.update { id -> Int in
             id += 1
             return id
@@ -54,16 +56,18 @@ final class ManualScheduler: SyncScheduler {
 }
 
 /// One-shot signal a test opens to let a suspended task go on.
-actor Gate {
+public actor Gate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func wait() async {
+    public init() {}
+
+    public func wait() async {
         if isOpen { return }
         await withCheckedContinuation { waiters.append($0) }
     }
 
-    func open() {
+    public func open() {
         isOpen = true
         for waiter in waiters { waiter.resume() }
         waiters = []
@@ -72,8 +76,8 @@ actor Gate {
 
 /// The server's side of sync, enough to converge devices: a per-account store that merges by the
 /// same rule, a write sequence for cursors, and creators stamped on definitions.
-actor FakeServer: SyncTransport {
-    enum Mode {
+public actor FakeServer: SyncTransport {
+    public enum Mode: Sendable {
         case online
         case offline
         case rejectsToken
@@ -90,44 +94,44 @@ actor FakeServer: SyncTransport {
     private var accountsById: [String: AccountData] = [:]
     private var userIdByToken: [String: String] = [:]
     private var sequence: Int64 = 0
-    var mode = Mode.online
-    private(set) var requests: [SyncRequest] = []
-    private(set) var profilePatches: [ProfilePatch] = []
+    public private(set) var mode = Mode.online
+    public private(set) var requests: [SyncRequest] = []
+    public private(set) var profilePatches: [ProfilePatch] = []
     /// When set, each request opens `arrived`, then waits on `release` before answering.
     private var hold: (arrived: Gate, release: Gate)?
 
-    init(accounts: [Account] = [Account(id: "u1", name: "Me", timeZone: "America/Denver")]) {
+    public init(accounts: [Account] = [Account(id: "u1", name: "Me", timeZone: "America/Denver")]) {
         for account in accounts { accountsById[account.id] = AccountData(account: account) }
     }
 
-    func setMode(_ mode: Mode) {
+    public func setMode(_ mode: Mode) {
         self.mode = mode
     }
 
-    func assign(token: String, to userId: String) {
+    public func assign(token: String, to userId: String) {
         userIdByToken[token] = userId
     }
 
-    func holdNextRequest() -> (arrived: Gate, release: Gate) {
+    public func holdNextRequest() -> (arrived: Gate, release: Gate) {
         let gates = (arrived: Gate(), release: Gate())
         hold = gates
         return gates
     }
 
-    func entry(_ id: String, userId: String = "u1") -> Entry? {
+    public func entry(_ id: String, userId: String = "u1") -> Entry? {
         accountsById[userId]?.entriesById[id]
     }
 
-    func definition(_ key: String, userId: String = "u1") -> Definition? {
+    public func definition(_ key: String, userId: String = "u1") -> Definition? {
         accountsById[userId]?.definitionsByKey[key]
     }
 
-    func account(_ userId: String = "u1") -> Account? {
+    public func account(_ userId: String = "u1") -> Account? {
         accountsById[userId]?.account
     }
 
     /// Writes entries as if another client had pushed them.
-    func seed(_ entries: [Entry], userId: String = "u1") {
+    public func seed(_ entries: [Entry], userId: String = "u1") {
         merge(entries, into: userId)
     }
 
@@ -149,7 +153,7 @@ actor FakeServer: SyncTransport {
         }
     }
 
-    func sync(_ request: SyncRequest, token: String) async throws -> SyncResponse {
+    public func sync(_ request: SyncRequest, token: String) async throws -> SyncResponse {
         requests.append(request)
         try await checkMode()
         // Round-trip through JSON, as the wire does.
@@ -166,7 +170,7 @@ actor FakeServer: SyncTransport {
         return SyncResponse(entries: entries, definitions: Array(data.definitionsByKey.values), cursor: sequence, account: data.account)
     }
 
-    func pushProfile(_ patch: ProfilePatch, token: String) async throws -> Account {
+    public func pushProfile(_ patch: ProfilePatch, token: String) async throws -> Account {
         profilePatches.append(patch)
         try await checkMode()
         let userId = userId(for: token)
@@ -195,16 +199,17 @@ actor FakeServer: SyncTransport {
     }
 }
 
-let testStartMs = instantMs(.string("2026-10-08T18:00:00Z"))
+/// 2026-10-08T18:00:00Z, when every test device's clock starts.
+public let testStartMs: Int64 = 1_791_482_400_000
 
 /// A device: its own store, clock and timers, talking to a shared server.
-struct Device {
-    let engine: SyncEngine
-    let store: MemoryReplicaStore
-    let scheduler: ManualScheduler
-    let clock: Locked<Int64>
+public struct Device {
+    public let engine: SyncEngine
+    public let store: any ReplicaStore
+    public let scheduler: ManualScheduler
+    public let clock: Locked<Int64>
 
-    init(server: any SyncTransport, store: MemoryReplicaStore = MemoryReplicaStore(), token: String? = "tok", deviceTimeZone: String = "America/Denver") throws {
+    public init(server: any SyncTransport, store: any ReplicaStore = MemoryReplicaStore(), token: String? = "tok", deviceTimeZone: String = "America/Denver") throws {
         let scheduler = ManualScheduler()
         let clock = Locked(testStartMs)
         if let token {

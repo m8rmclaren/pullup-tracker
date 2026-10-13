@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14), .watchOS(.v10)],
     products: [
         .library(name: "TrackerCore", targets: ["TrackerCore"]),
+        /// Fakes for tests of anything built on TrackerCore: a server, a scheduler, a store conformance check.
+        .library(name: "TrackerCoreTesting", targets: ["TrackerCoreTesting"]),
     ],
     dependencies: [
         // SHA-256 on Linux, where CryptoKit doesn't exist. Apple platforms use CryptoKit.
@@ -17,6 +19,7 @@ let package = Package(
             dependencies: [.product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))],
             resources: [.copy("Resources/catalog.json")]
         ),
-        .testTarget(name: "TrackerCoreTests", dependencies: ["TrackerCore"]),
+        .target(name: "TrackerCoreTesting", dependencies: ["TrackerCore"]),
+        .testTarget(name: "TrackerCoreTests", dependencies: ["TrackerCore", "TrackerCoreTesting"]),
     ]
 )

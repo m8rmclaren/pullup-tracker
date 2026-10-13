@@ -24,11 +24,12 @@ ios/
   project.yml                 XcodeGen spec: targets, entitlements, App Group, signing team
   TrackerCore/                Swift package — no UIKit/SwiftUI; builds and tests on Linux
     Sources/TrackerCore/      Entry, merge, catalog, definitions, DayCalendar, Stats, Resolver, SyncEngine, APIClient
+    Sources/TrackerCoreTesting/  fake server and scheduler, store conformance, for this and TrackerStore's tests
     Tests/TrackerCoreTests/   runs shared fixtures + engine tests with a fake transport
+  TrackerStore/               Swift package — the GRDB replica store in the App Group container; macOS only
   App/                        SwiftUI app: screens, composer UI, App Intents, Live Activity, passkey UI
   Widgets/                    WidgetKit: ring, interactive repeat-set, Control Center control
   Watch/                      watchOS app + complications
-  Shared/                     GRDB store and App Group plumbing used by App, Widgets, Watch
 ```
 
 It lives in this repo. An API change and both clients land in one PR, and the fixtures are
@@ -47,8 +48,10 @@ Behavior is pinned by the shared fixtures in [v2-design.md](v2-design.md#shared-
 differs from `src/shared/catalog.json`.
 
 - **`Entry`, `Definition`, `pickWinner`, `normalize`, `isValid`**: ports of `model.ts`.
-- **`DayCalendar(zone:)`**: a Gregorian `Calendar` in the user's zone. Day keys stay
-  `YYYY-MM-DD` strings with pure calendar arithmetic, as in `time.ts`.
+- **`DayCalendar(zone:)`**: days in the user's zone. Only the UTC offset comes from
+  `TimeZone`; the calendar arithmetic is done in the package over the proleptic Gregorian
+  calendar, so day keys match JavaScript's `Date` exactly. Day keys stay `YYYY-MM-DD`
+  strings, as in `time.ts`.
 - **`Stats`**: a port of `stats.ts`, extended per exercise and per unit.
 - **`Resolver`**: names to ids, and draft expansion.
 - **`SyncEngine`** is an actor that ports `tracker.ts`'s semantics: 1.2 s debounce,
@@ -76,6 +79,15 @@ is one transaction: upsert the entry and add it to the outbox.
 Any process may run a sync. Two concurrent syncs are safe by construction: pushes are
 idempotent merges, the cursor is written as `max(stored, new)`, and outbox rows are cleared
 only where the stored `updatedAt` still matches the one sent.
+
+`TrackerStore`'s `SQLiteReplicaStore` stores entries and definitions as their wire JSON,
+beside the columns a query needs, so a field added to the model needs no migration. Each
+process opens its own `DatabasePool` on the file, with a busy timeout so a writer waits out
+another process's transaction instead of failing. The app must post
+`Database.suspendNotification` as it goes to the background, or iOS kills it for holding a
+lock on a file in the shared container. Every store passes the same conformance check
+(`TrackerCoreTesting`), and the sync tests run against SQLite too, including two
+connections writing at once.
 
 At about 4,000 sets a year, the whole history loads into memory for stats in milliseconds.
 SQLite is there for safe concurrent writes, not for size. SwiftData was rejected: its
@@ -125,9 +137,10 @@ Repeat, not the composer.
 | App, widgets, Watch (compile + unit tests) | macOS runner: `xcodegen generate && xcodebuild test` | CI, logs readable from a session through GitHub |
 | Look, feel, haptics, the passkey ceremony | A device | **You**, from TestFlight, with a short checklist per milestone |
 
-**CI.** `pipeline.yml` gains a Linux `swift test` step. A separate macOS job builds and
-tests the Xcode project, only when `ios/**` or the fixtures change (macOS minutes cost
-about 10× Linux). PR checks use GitHub Actions, not Xcode Cloud, so a session can read the
+**CI.** `pipeline.yml` runs `TrackerCore`'s `swift test` on Linux. `ios.yml` runs on macOS,
+only when `ios/**`, `src/shared/**` or the fixtures change (macOS minutes cost about 10×
+Linux): today `TrackerStore`'s tests, and the Xcode project's build and tests once it
+exists. PR checks use GitHub Actions, not Xcode Cloud, so a session can read the
 logs and fix its own red build.
 
 **Release.**

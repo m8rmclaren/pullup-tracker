@@ -13,6 +13,7 @@ relevant section there before changing any of them.
 - `scripts/` — build, dev, deploy, invite tooling
 - `test/` — vitest suites
 - `ios/TrackerCore/` — the Swift package the iOS app's logic lives in: ports of `src/shared/`, tested against `test/fixtures/`
+- `ios/TrackerStore/` — the iOS app's SQLite replica store (GRDB), shared across the app's processes
 - `docs/product.md` — v2 product shape, growth loop, milestones and open questions
 - `docs/v2-design.md` — v2 data model, API, auth and composer; read it before changing any of them
 - `docs/ios.md` — native iOS app architecture, build and release; read it before working on `ios/`

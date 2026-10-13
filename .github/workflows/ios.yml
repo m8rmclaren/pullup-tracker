@@ -1,0 +1,21 @@
+name: ios
+
+# macOS minutes cost about 10× Linux, so this runs only when the iOS code or what it shares changes.
+on:
+  pull_request:
+    paths: ['ios/**', 'src/shared/**', 'test/fixtures/**', '.github/workflows/ios.yml']
+  push:
+    branches: [main]
+    paths: ['ios/**', 'src/shared/**', 'test/fixtures/**', '.github/workflows/ios.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  trackerstore:
+    # The SQLite replica store, Apple-only through GRDB. TrackerCore runs on Linux in pipeline.yml.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - run: swift test
+        working-directory: ios/TrackerStore

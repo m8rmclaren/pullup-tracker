@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import TrackerCore
+import TrackerCoreTesting
 
 private let account = Account(id: "u1", name: "Me", timeZone: "America/Denver")
 
@@ -10,6 +11,10 @@ private func sortedEntries(_ engine: SyncEngine) throws -> [Entry] {
 
 @Suite("SyncEngine")
 struct SyncEngineTests {
+    @Test func memoryStoreConforms() throws {
+        #expect(try replicaStoreConformanceFailures { MemoryReplicaStore() } == [])
+    }
+
     @Test func logsLocallyAndPersistsBeforeAnyNetwork() async throws {
         let server = FakeServer()
         await server.setMode(.offline)
@@ -455,5 +460,14 @@ struct APIClientTests {
         await #expect(throws: HTTPError(status: 502, message: "HTTP 502")) {
             try await bare.pushProfile(ProfilePatch(), token: "tok")
         }
+    }
+}
+
+@Suite("ReplicaState")
+struct ReplicaStateTests {
+    @Test func readsStateSavedBeforeAFieldExisted() throws {
+        let state = try JSONDecoder().decode(ReplicaState.self, from: Data(#"{"token":"tok","cursor":5,"settings":{"goalReps":40}}"#.utf8))
+        #expect(state.token == "tok" && state.cursor == 5 && state.account == nil && state.pendingProfile.isEmpty)
+        #expect(state.settings.goalReps == 40 && state.settings.padAddedWeightsLbs.isEmpty)
     }
 }
