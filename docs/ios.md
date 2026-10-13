@@ -152,15 +152,17 @@ phone come from Xcode Cloud, which chooses its Xcode version in the cloud. App S
 Connect only accepts builds made with a recent SDK, and Xcode 16.4 may not install to a
 phone running a newer iOS than it knows.
 
-**Running it.** From `ios/`, `xcodegen generate` writes `Pullups.xcodeproj`; open it, or
-build with `xcodebuild -project Pullups.xcodeproj -scheme Pullups -destination
+**Running it.** From `ios/`, `xcodegen generate` writes `Tracker.xcodeproj`; open it, or
+build with `xcodebuild -project Tracker.xcodeproj -scheme Tracker -destination
 'platform=iOS Simulator,name=iPhone 16'`. Debug talks to `npm run dev` on
 `http://localhost:5173`. Override it with `API_BASE_URL=http://localhost:<port>` on the
 `xcodebuild` line when the dev server lands on another port. Sign the Simulator in with the
 device link the dev server prints. Passkeys need the real domain's AASA listing the app
-(`APPLE_APP_ID` = `CP4PXEQ2P5.com.haydenroszell.pullups` in the repo's Actions variables), so
+(`APPLE_APP_ID` = `CP4PXEQ2P5.com.haydenroszell.tracker` in the repo's Actions variables), so
 they work only once that is deployed. The Team ID is `CP4PXEQ2P5`, the bundle id
-`com.haydenroszell.pullups`, and the App Group `group.com.haydenroszell.pullups`.
+`com.haydenroszell.tracker`, and the App Group `group.com.haydenroszell.tracker`. They are
+generic on purpose: a bundle id can never change once the app is registered, and the product
+doesn't have its name yet. The name people see is `CFBundleDisplayName`, which changes freely.
 
 **Release.**
 - Xcode Cloud builds and uploads to TestFlight on pushes to `main` that touch `ios/`.

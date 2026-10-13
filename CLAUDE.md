@@ -27,7 +27,7 @@ relevant section there before changing any of them.
 | `npm run typecheck` | `tsc` over the app and the service worker config |
 | `npm test` | vitest |
 | `npm run check` | typecheck + test — run before calling a change done |
-| `xcodegen generate` (in `ios/`) | writes `Pullups.xcodeproj` from `project.yml`; the project file isn't committed |
+| `xcodegen generate` (in `ios/`) | writes `Tracker.xcodeproj` from `project.yml`; the project file isn't committed |
 | `swift test` (in `ios/TrackerCore`) | the Swift port against the shared fixtures — run after any change to `src/shared/` or `test/fixtures/` |
 | `npm run eval:compose` | run `test/fixtures/compose/descriptions.json` against the real model on Bedrock — costs money, needs AWS credentials, never in CI |
 

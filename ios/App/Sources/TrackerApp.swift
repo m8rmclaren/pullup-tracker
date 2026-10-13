@@ -2,7 +2,7 @@ import SwiftUI
 import TrackerCore
 
 @main
-struct PullupsApp: App {
+struct TrackerApp: App {
     @State private var model: AppModel? = {
         do {
             return try AppModel.live()

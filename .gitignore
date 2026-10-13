@@ -14,4 +14,4 @@ infra/.terraform.lock.hcl
 .DS_Store
 ios/*.xcodeproj/
 ios/App/Info.plist
-ios/App/Pullups.entitlements
+ios/App/Tracker.entitlements

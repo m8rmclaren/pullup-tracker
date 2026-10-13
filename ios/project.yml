@@ -1,4 +1,4 @@
-name: Pullups
+name: Tracker
 options:
   bundleIdPrefix: com.haydenroszell
   deploymentTarget:
@@ -21,7 +21,7 @@ packages:
     path: TrackerStore
 
 targets:
-  Pullups:
+  Tracker:
     type: application
     platform: iOS
     sources:
@@ -33,7 +33,7 @@ targets:
       - package: TrackerStore
         product: TrackerStore
     entitlements:
-      path: App/Pullups.entitlements
+      path: App/Tracker.entitlements
       properties:
         com.apple.security.application-groups:
           - $(APP_GROUP)
@@ -43,7 +43,8 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Pull-ups
+        # A placeholder until the product has a name; the bundle id stays generic for good.
+        CFBundleDisplayName: Tracker
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         APIBaseURL: $(API_BASE_URL)
@@ -53,8 +54,8 @@ targets:
           NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.haydenroszell.pullups
-        APP_GROUP: group.com.haydenroszell.pullups
+        PRODUCT_BUNDLE_IDENTIFIER: com.haydenroszell.tracker
+        APP_GROUP: group.com.haydenroszell.tracker
         API_DOMAIN: pullups.haydenroszell.com
         API_BASE_URL: https://pullups.haydenroszell.com
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
