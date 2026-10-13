@@ -5,7 +5,7 @@ did; the day's total updates instantly and syncs in the background. Daily totals
 trends live one tab over.
 
 <p>
-  <img src="docs/today.png" width="200" alt="Today: ring with today's total, set chips, quick-add pad">
+  <img src="docs/today.png" width="200" alt="Today: ring with today's total, then the pad: an amount, the exercise, its configuration, Log, and Repeat">
   <img src="docs/edit.png" width="200" alt="Editing a set">
   <img src="docs/trends.png" width="200" alt="Trends: stat tiles and 30-day chart">
   <img src="docs/offline.png" width="200" alt="Offline: tap still counts, queued for sync">

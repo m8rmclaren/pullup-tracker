@@ -102,7 +102,7 @@ export function Today({ tracker, stats, now, timeZone, onLogged, onEdit, onOpenC
     haptic(14);
     setPressedAmount(amount);
     setTimeout(() => setPressedAmount(null), 260);
-    const template: SetTemplate = { ...context, addedWeightLbs };
+    const template: SetTemplate = { exerciseId: context.exerciseId, variationIds: context.variationIds, addedWeightLbs };
     if (isTimed) template.holdSeconds = amount;
     else template.reps = amount;
     onLogged(tracker.logTemplate(template));
