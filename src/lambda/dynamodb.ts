@@ -2,7 +2,7 @@ import { ConditionalCheckFailedException, TransactionCanceledException } from '@
 import { BatchGetCommand, type BatchGetCommandOutput, DeleteCommand, type DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, type QueryCommandInput, type QueryCommandOutput, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { type Definition, type DefinitionKey, definitionKeyOf, definitionKeyString, normalizeDefinition, parseDefinitionKeyString } from '../shared/definitions';
 import type { Challenge } from '../shared/model';
-import { type ChallengeJoin, type DailyCount, type Db, type FriendLink, type FriendRequest, type Invite, type Link, type Membership, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
+import { type ChallengeJoin, type ComposeSpend, type DailyCount, type DailyCountKind, type Db, type FriendLink, type FriendRequest, type Invite, type Link, type Membership, type NewAccount, type Passkey, type PendingChallenge, type StoredDayTotal, type StoredDefinition, type StoredEntry, type User, PreconditionFailed } from './db';
 
 // Single-table layout (pk, sk):
 //   U#<userId>  P           profile: id, name, createdAt, and once edited version, nameUpdatedAt, timeZone/zoneUpdatedAt,
@@ -29,6 +29,8 @@ import { type ChallengeJoin, type DailyCount, type Db, type FriendLink, type Fri
 //   U#<userId>  R#<fromId>  incoming friend request: challengeId, createdAt, declinedAt? (a decline leaves this as a tombstone)
 //   U#<userId>  S#<toId>    the same request from the sender's side, written in the same transaction: challengeId, createdAt
 //   U#<userId>  RQ#<day>    friend requests sent that day: count, version, ttlEpochSeconds (R# queries can't match it: 'RQ#' ≠ 'R#…')
+//   U#<userId>  Q#<day>     composes that day: count, version, ttlEpochSeconds
+//   B#<month>   B           composer spend across all accounts that UTC month: spentMicroUsd, version
 //   C#<hash>    C           pending WebAuthn challenge: purpose, userId?, name?, timeZone?, expiresAt, ttlEpochSeconds
 //   W#<day>     U#<userId>  the empty-account sweep looks at this account on <day>
 //   X#<exId>    X           created exercise: id, name, measure, unit?, description?, createdBy?, createdAt, updatedAt, version
@@ -47,7 +49,8 @@ const MEMBERSHIP_SK_PREFIX = 'G#';
 const challengeKey = (challengeId: string) => ({ pk: `G#${challengeId}`, sk: 'G' });
 const RECEIVED_SK_PREFIX = 'R#';
 const SENT_SK_PREFIX = 'S#';
-const DAILY_COUNT_SK_PREFIX = { requests: 'RQ#' } as const;
+const DAILY_COUNT_SK_PREFIX = { requests: 'RQ#', compose: 'Q#' } as const;
+const composeSpendKey = (month: string) => ({ pk: `B#${month}`, sk: 'B' });
 
 function itemToRequest(item: Record<string, unknown>, prefix: string): FriendRequest {
   const request: FriendRequest = { userId: (item.sk as string).slice(prefix.length), challengeId: item.challengeId as string, createdAt: item.createdAt as number };
@@ -564,13 +567,23 @@ export class DynamoDb implements Db {
     }
   }
 
-  async getDailyCount(userId: string, kind: 'requests', day: string) {
+  async getDailyCount(userId: string, kind: DailyCountKind, day: string) {
     const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: { pk: userPartitionKey(userId), sk: DAILY_COUNT_SK_PREFIX[kind] + day }, ConsistentRead: true }));
     return response.Item ? { count: response.Item.count as number, version: response.Item.version as number } : null;
   }
 
-  async putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number) {
+  async putDailyCount(userId: string, kind: DailyCountKind, day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number) {
     const Item = { pk: userPartitionKey(userId), sk: DAILY_COUNT_SK_PREFIX[kind] + day, ...count, ttlEpochSeconds };
+    await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
+  }
+
+  async getComposeSpend(month: string) {
+    const response = await this.documentClient.send(new GetCommand({ TableName: this.tableName, Key: composeSpendKey(month), ConsistentRead: true }));
+    return response.Item ? { spentMicroUsd: response.Item.spentMicroUsd as number, version: response.Item.version as number } : null;
+  }
+
+  async putComposeSpend(month: string, spend: ComposeSpend, expectedVersion: number | null) {
+    const Item = { ...composeSpendKey(month), ...spend };
     await mapConditionFailure(this.documentClient.send(new PutCommand({ TableName: this.tableName, Item, ...versionCondition('version', expectedVersion) })));
   }
 

@@ -1165,7 +1165,8 @@ input:focus-visible {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   height: 46px;
   width: 100%;
   min-width: 0;
@@ -1598,4 +1599,43 @@ input:focus-visible {
 
 .trends__picker {
   margin: 0 0 12px;
+}
+
+/* ---------- describe ---------- */
+
+.field textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 10px 12px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.draft {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.draft__card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.draft__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.draft__new {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--accent);
 }

@@ -7,6 +7,7 @@ import { dayKey, formatDay } from '../shared/time';
 import { parseDeviceLink, parseJoinLink } from './api';
 import { ProfileSheet } from './Board';
 import { ChallengeSheet, CreateChallengeSheet } from './Challenges';
+import { DescribeSheet } from './Describe';
 import { FriendsTab, LinkSheet } from './Friends';
 import { describeSet, unitLookup } from './labels';
 import { useNow, useTracker } from './hooks';
@@ -26,6 +27,7 @@ type SheetState =
   | { kind: 'profile'; userId: string }
   | { kind: 'challenge'; challengeId: string }
   | { kind: 'newChallenge' }
+  | { kind: 'describe' }
   | null;
 
 interface Toast {
@@ -110,6 +112,7 @@ export function App({ tracker }: { tracker: Tracker }) {
             onOpenSettings={() => setSheet({ kind: 'settings' })}
             onOpenPadWeight={(exerciseId) => setSheet({ kind: 'weight', exerciseId })}
             onToast={(text) => showToast(text)}
+            onOpenDescribe={() => setSheet({ kind: 'describe' })}
           />
         ) : tab === 'trends' ? (
           <Trends tracker={tracker} entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
@@ -227,6 +230,16 @@ export function App({ tracker }: { tracker: Tracker }) {
             setFriendsVersion((current) => current + 1);
             showToast(message);
             setSheet(challengeId ? { kind: 'challenge', challengeId } : null);
+          }}
+        />
+      ) : null}
+      {sheet?.kind === 'describe' ? (
+        <DescribeSheet
+          tracker={tracker}
+          onClose={closeSheet}
+          onLoggedAll={(setCount) => {
+            setSheet(null);
+            showToast(`Logged ${setCount} ${setCount === 1 ? 'set' : 'sets'}`);
           }}
         />
       ) : null}

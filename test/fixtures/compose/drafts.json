@@ -1,0 +1,677 @@
+{
+ "nowMs": "2026-10-08T18:00:00-06:00",
+ "known": [
+  {
+   "id": "pull-up",
+   "name": "Pull-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "push-up",
+   "name": "Push-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "front-lever",
+   "name": "Front lever",
+   "measure": "time"
+  },
+  {
+   "id": "muscle-up",
+   "name": "Muscle-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "x-k3p9aaaaaaaaaaaa",
+   "name": "Red Rocks stairs",
+   "measure": "count",
+   "unit": "lap"
+  }
+ ],
+ "knownVariations": {
+  "muscle-up": [
+   {
+    "id": "v-intotuckaaaaaaaa",
+    "name": "Into tuck"
+   }
+  ]
+ },
+ "cases": [
+  {
+   "name": "4x8 wide pull-ups",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Pull-up",
+      "variations": [
+       "Wide grip"
+      ],
+      "repeat": 4,
+      "minutesAgo": 0,
+      "reps": 8
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [
+       "wide-grip"
+      ],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 8,
+      "doneAt": 1791503997000
+     },
+     {
+      "variationIds": [
+       "wide-grip"
+      ],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 8,
+      "doneAt": 1791503998000
+     },
+     {
+      "variationIds": [
+       "wide-grip"
+      ],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 8,
+      "doneAt": 1791503999000
+     },
+     {
+      "variationIds": [
+       "wide-grip"
+      ],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 8,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "the Red Rocks session: a friend's exercise, push-ups at the top, a tuck lever",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "red rocks",
+      "variations": [],
+      "repeat": 3,
+      "minutesAgo": 0,
+      "reps": 1
+     },
+     {
+      "exercise": "push ups",
+      "variations": [],
+      "repeat": 3,
+      "minutesAgo": 0,
+      "reps": 20
+     },
+     {
+      "exercise": "Front lever",
+      "variations": [
+       "Tuck"
+      ],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "holdSeconds": 45
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "x-k3p9aaaaaaaaaaaa",
+      "reps": 1,
+      "doneAt": 1791503998000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "x-k3p9aaaaaaaaaaaa",
+      "reps": 1,
+      "doneAt": 1791503999000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "x-k3p9aaaaaaaaaaaa",
+      "reps": 1,
+      "doneAt": 1791504000000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "push-up",
+      "reps": 20,
+      "doneAt": 1791503998000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "push-up",
+      "reps": 20,
+      "doneAt": 1791503999000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "push-up",
+      "reps": 20,
+      "doneAt": 1791504000000
+     },
+     {
+      "variationIds": [
+       "tuck"
+      ],
+      "newVariations": [],
+      "exerciseId": "front-lever",
+      "holdSeconds": 45,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "a new exercise the model describes",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Sandbag carry",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 30,
+      "reps": 4
+     }
+    ],
+    "newExercises": [
+     {
+      "name": "Sandbag carry",
+      "measure": "count",
+      "unit": "lap",
+      "description": "Carry the sandbag around the block"
+     }
+    ]
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "newExerciseIndex": 0,
+      "reps": 4,
+      "doneAt": 1791502200000
+     }
+    ],
+    "newExercises": [
+     {
+      "name": "Sandbag carry",
+      "measure": "count",
+      "unit": "lap",
+      "description": "Carry the sandbag around the block"
+     }
+    ]
+   }
+  },
+  {
+   "name": "a proposed new exercise that is already known is dropped",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Red Rocks Stairs",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 2
+     }
+    ],
+    "newExercises": [
+     {
+      "name": "Red Rocks Stairs",
+      "measure": "count",
+      "unit": "lap"
+     }
+    ]
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "x-k3p9aaaaaaaaaaaa",
+      "reps": 2,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "an unproposed unknown exercise is new, timed by a hold",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Wall sit",
+      "variations": [],
+      "repeat": 2,
+      "minutesAgo": 0,
+      "holdSeconds": 60
+     },
+     {
+      "exercise": "wall sits",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "holdSeconds": 30
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "newExerciseIndex": 0,
+      "holdSeconds": 60,
+      "doneAt": 1791503999000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "newExerciseIndex": 0,
+      "holdSeconds": 60,
+      "doneAt": 1791504000000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "newExerciseIndex": 0,
+      "holdSeconds": 30,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": [
+     {
+      "name": "Wall sit",
+      "measure": "time"
+     }
+    ]
+   }
+  },
+  {
+   "name": "an amount in the wrong measure moves to the exercise's own",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "front lever",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 30
+     },
+     {
+      "exercise": "Pull-up",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "holdSeconds": 5
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "front-lever",
+      "holdSeconds": 30,
+      "doneAt": 1791504000000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 5,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "variations: created, built-in, and new by name",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Muscle-up",
+      "variations": [
+       "into tuck",
+       "Negative",
+       "band",
+       "Ring turnout"
+      ],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 3
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [
+       "band",
+       "negative",
+       "v-intotuckaaaaaaaa"
+      ],
+      "newVariations": [
+       "Ring turnout"
+      ],
+      "exerciseId": "muscle-up",
+      "reps": 3,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "built-in variations stay one per group, the later winning",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Pull-up",
+      "variations": [
+       "Wide grip",
+       "Close grip"
+      ],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 6
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [
+       "close-grip"
+      ],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 6,
+      "doneAt": 1791504000000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "relative times: this time yesterday, and added weight",
+   "draft": {
+    "sets": [
+     {
+      "exercise": "Pull-up",
+      "variations": [],
+      "repeat": 2,
+      "minutesAgo": 1440,
+      "reps": 5,
+      "addedWeightLbs": 25
+     }
+    ],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 5,
+      "addedWeightLbs": 25,
+      "doneAt": 1791417599000
+     },
+     {
+      "variationIds": [],
+      "newVariations": [],
+      "exerciseId": "pull-up",
+      "reps": 5,
+      "addedWeightLbs": 25,
+      "doneAt": 1791417600000
+     }
+    ],
+    "newExercises": []
+   }
+  },
+  {
+   "name": "an empty draft",
+   "draft": {
+    "sets": [],
+    "newExercises": []
+   },
+   "expected": {
+    "items": [],
+    "newExercises": []
+   }
+  }
+ ],
+ "drafts": [
+  {
+   "name": "a plain draft",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Pull-up",
+      "variations": [],
+      "repeat": 4,
+      "minutesAgo": 0,
+      "reps": 8
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": true
+  },
+  {
+   "name": "empty",
+   "value": {
+    "sets": [],
+    "newExercises": []
+   },
+   "valid": true
+  },
+  {
+   "name": "both reps and a hold",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Plank",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 3,
+      "holdSeconds": 30
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "neither reps nor a hold",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Plank",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "3x10 misread as 310 is still a valid amount",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Push-up",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 310
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": true
+  },
+  {
+   "name": "a fractional rep",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Push-up",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 2.5
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "repeat of zero",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Push-up",
+      "variations": [],
+      "repeat": 0,
+      "minutesAgo": 0,
+      "reps": 5
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "more than 100 sets in all",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Push-up",
+      "variations": [],
+      "repeat": 50,
+      "minutesAgo": 0,
+      "reps": 5
+     },
+     {
+      "exercise": "Pull-up",
+      "variations": [],
+      "repeat": 50,
+      "minutesAgo": 0,
+      "reps": 5
+     },
+     {
+      "exercise": "Dip",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 5
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "more than a week ago",
+   "value": {
+    "sets": [
+     {
+      "exercise": "Push-up",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 10081,
+      "reps": 5
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "a blank exercise name",
+   "value": {
+    "sets": [
+     {
+      "exercise": "  ",
+      "variations": [],
+      "repeat": 1,
+      "minutesAgo": 0,
+      "reps": 5
+     }
+    ],
+    "newExercises": []
+   },
+   "valid": false
+  },
+  {
+   "name": "a counted new exercise needs a unit",
+   "value": {
+    "sets": [],
+    "newExercises": [
+     {
+      "name": "Stairs",
+      "measure": "count"
+     }
+    ]
+   },
+   "valid": false
+  },
+  {
+   "name": "a timed new exercise has no unit",
+   "value": {
+    "sets": [],
+    "newExercises": [
+     {
+      "name": "Wall sit",
+      "measure": "time",
+      "unit": "second"
+     }
+    ]
+   },
+   "valid": false
+  },
+  {
+   "name": "missing newExercises",
+   "value": {
+    "sets": []
+   },
+   "valid": false
+  }
+ ]
+}

@@ -383,6 +383,20 @@ describe.skipIf(!endpoint)('DynamoDb', () => {
     expect(await db.getDailyCount('dc', 'requests', '2026-10-14')).toEqual({ count: 2, version: 2 });
   });
 
+  it('keeps compose counts apart from request counts, and the monthly spend versioned', async () => {
+    await db.putDailyCount('dq', 'requests', '2026-10-14', { count: 5, version: 5 }, null, 9_999_999_999);
+    expect(await db.getDailyCount('dq', 'compose', '2026-10-14')).toBeNull();
+    await db.putDailyCount('dq', 'compose', '2026-10-14', { count: 1, version: 1 }, null, 9_999_999_999);
+    expect(await db.getDailyCount('dq', 'compose', '2026-10-14')).toEqual({ count: 1, version: 1 });
+    expect(await db.getDailyCount('dq', 'requests', '2026-10-14')).toEqual({ count: 5, version: 5 });
+
+    expect(await db.getComposeSpend('2026-10')).toBeNull();
+    await db.putComposeSpend('2026-10', { spentMicroUsd: 400, version: 1 }, null);
+    await expect(db.putComposeSpend('2026-10', { spentMicroUsd: 800, version: 2 }, null)).rejects.toBeInstanceOf(PreconditionFailed);
+    await db.putComposeSpend('2026-10', { spentMicroUsd: 800, version: 2 }, 1);
+    expect(await db.getComposeSpend('2026-10')).toEqual({ spentMicroUsd: 800, version: 2 });
+  });
+
   it('finds sweep markers, tells an empty account from one with content, and deletes an account with its tokens', async () => {
     const user = { id: 'sw1', name: 'Sweepme', createdAt: 1, timeZone: 'Europe/London' };
     await db.createAccount({ user, passkey: { credentialId: 'cred-sw1', publicKey: 'pk', counter: 0, createdAt: 1 }, tokenHash: 'tok-sw1', sweepDay: '2026-11-20' });

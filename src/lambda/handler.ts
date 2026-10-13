@@ -1,5 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { bedrockComposer } from './bedrock';
+import type { ComposeConfig } from './compose';
 import { DynamoDb } from './dynamodb';
 import { route } from './http';
 import type { WebAuthnConfig } from './passkeys';
@@ -18,6 +20,15 @@ const db = new DynamoDb(DynamoDBDocumentClient.from(new DynamoDBClient({}), { ma
 // Set from the custom domain in infra/main.tf; without one, passkeys stay off rather than bind to a cloudfront.net name.
 const webAuthn: WebAuthnConfig | undefined = process.env.RP_ID && process.env.APP_ORIGIN ? { rpId: process.env.RP_ID, rpName: 'Pull-ups', origins: [process.env.APP_ORIGIN] } : undefined;
 const isSignupOpen = process.env.SIGNUP_OPEN === 'true';
+// Set in infra/main.tf when compose_enabled; without a model id, /api/compose answers 503.
+const composeConfig: ComposeConfig | undefined = process.env.COMPOSE_MODEL_ID
+  ? {
+      composer: bedrockComposer({ region: process.env.AWS_REGION!, modelId: process.env.COMPOSE_MODEL_ID }),
+      monthlyCeilingUsd: Number(process.env.COMPOSE_MONTHLY_CEILING_USD ?? '5'),
+      inputUsdPerMillionTokens: Number(process.env.COMPOSE_INPUT_USD_PER_MTOK ?? '0.10'),
+      outputUsdPerMillionTokens: Number(process.env.COMPOSE_OUTPUT_USD_PER_MTOK ?? '0.50'),
+    }
+  : undefined;
 
 // Cached briefly so a sync doesn't pay a read for auth; a revoked token stops working within a minute.
 const TOKEN_CACHE_TTL_MS = 60_000;
@@ -57,7 +68,7 @@ export async function handler(event: FunctionUrlEvent | SweepEvent): Promise<Fun
   }
   const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : '';
   try {
-    const response = await route({ method: event.requestContext.http.method, path: event.rawPath, headers: event.headers ?? {}, body }, { db, userIdForToken, webAuthn, isSignupOpen });
+    const response = await route({ method: event.requestContext.http.method, path: event.rawPath, headers: event.headers ?? {}, body }, { db, userIdForToken, webAuthn, isSignupOpen, compose: composeConfig });
     return { statusCode: response.status, headers: JSON_HEADERS, body: JSON.stringify(response.body) };
   } catch (error) {
     console.error('request failed', event.rawPath, error);

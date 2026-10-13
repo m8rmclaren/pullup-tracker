@@ -5,8 +5,10 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { createDeviceLink } from '../lambda/accounts';
 import { hashToken } from '../lambda/auth';
+import { bedrockComposer } from '../lambda/bedrock';
 import { MemoryDb } from '../lambda/db';
 import { route } from '../lambda/http';
+import { patternComposer } from './composer';
 
 const root = process.cwd();
 const siteDir = join(root, 'dist/site');
@@ -73,6 +75,13 @@ const devLink = await createDeviceLink(db, DEV_USER_ID, clock);
 db.save();
 // Passkeys need a domain, and an IP address isn't one, so they work on localhost but not on 127.0.0.1.
 const webAuthn = { rpId: 'localhost', rpName: 'Pull-ups (dev)', origins: [`http://localhost:${port}`] };
+// COMPOSE_MODEL_ID (and AWS credentials) uses Bedrock as the Lambda does; otherwise a pattern reader stands in.
+const devCompose = {
+  composer: process.env.COMPOSE_MODEL_ID ? bedrockComposer({ region: process.env.AWS_REGION ?? 'us-west-2', modelId: process.env.COMPOSE_MODEL_ID }) : patternComposer,
+  monthlyCeilingUsd: 1,
+  inputUsdPerMillionTokens: 0.1,
+  outputUsdPerMillionTokens: 0.5,
+};
 
 const contentTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -89,7 +98,7 @@ createServer(async (request, response) => {
   if (url.pathname.startsWith('/api/')) {
     let body = '';
     for await (const chunk of request) body += chunk;
-    const apiResponse = await route({ method: request.method ?? 'GET', path: url.pathname, headers: request.headers as Record<string, string>, body }, { db, webAuthn, isSignupOpen: true });
+    const apiResponse = await route({ method: request.method ?? 'GET', path: url.pathname, headers: request.headers as Record<string, string>, body }, { db, webAuthn, isSignupOpen: true, compose: devCompose });
     db.save();
     response.writeHead(apiResponse.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     response.end(JSON.stringify(apiResponse.body));

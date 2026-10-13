@@ -23,6 +23,7 @@ validation or stats behavior.
 | `validation.json` | `entries`: a value and whether it is a valid entry. |
 | `boards.json` | `cases`: a board spec, the members (zone, goal, stored day totals as the server returns them) and a `now`; the expected rows in order (`id`, `name`, `value`, `rank`), and for a fixed window the `groupTotal`. Ties, missing days, goal-less members, other zones, pre-v2 day totals, holds and challenge windows. |
 | `compose/names.json` | `items` (id + name), `matches`: a typed or spoken name and the one item it means, or `null` when it means none or is ambiguous; `searches`: a query and the picker's results in order. |
+| `compose/drafts.json` | `cases`: a model's draft (`sets` with names, `repeat`, `minutesAgo`; `newExercises`), resolved against `known` exercises and `knownVariations` at `nowMs` into the sets a client shows (`items` with ids or new-exercise indexes, one per repeat, a second apart) and the `newExercises` still needed. `drafts`: values and whether `isValidDraft` accepts them. |
 | `stats.json` | `cases`: an entry history, zone and goal, and `checks` at given instants: partial `stats`, per-day `dayTotals`, `usualReps`, `heaviestSet`, and under `exercises` the same per exercise in its own unit (day totals, stats, `bestSet`, `heaviestSet`). A case may also pin the server's stored `dayTotals`. |
 
 ## The v1 golden history
