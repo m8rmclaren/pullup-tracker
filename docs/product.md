@@ -23,7 +23,7 @@ in, and it shows stats.
   number and Log. Repeating a set or a whole session is one tap.
 - **Describe anything.** Type or say what you did ("3 laps of the Red Rocks stairs, 20
   push-ups at the top each time"). A language model composes it into sets for you to
-  confirm. The server calls Claude Haiku for every client. Apple's on-device model can
+  confirm. The server calls Claude Haiku on Amazon Bedrock for every client. Apple's on-device model can
   take over on iOS later.
 - **Exercises are open, and they are the draw.** Anyone can define an exercise or a
   variation, and the backend stores it at face value. The hook is the absurdity and
@@ -239,7 +239,9 @@ person joins, and all three see one board. You wipe Safari and sign back in.
 **M2: the input pattern and the composer, in the PWA.**
 - Reps → exercise → configuration → Log. Repeat last set. Repeat session as a queue.
 - Creating exercises and variations. Per-exercise stats and boards. Add to mine.
-- `/api/compose` with Haiku, caps and the spend ceiling, and the compose fixtures.
+- `/api/compose` with Haiku on Bedrock, caps and the spend ceiling, and the compose fixtures.
+- Deploys on the interim domain: the operator is still the only account, so nothing is
+  bound to the wrong domain yet.
 
 *Done when:* the Red Rocks example logs from one sentence, on Android.
 
@@ -280,7 +282,8 @@ and Action button, the Live Activity.
 if the PWA holds Android users back.
 
 **You'll need to provide:** the Apple Developer Program membership ($99 a year), a bundle
-id and App Group, the final domain, an Anthropic API key for `/api/compose`, and Swift in
+id and App Group, the final domain, access to Claude Haiku 5.5 in the Bedrock console (and
+`COMPOSE_ENABLED` once the bootstrap stack is updated) for `/api/compose`, and Swift in
 this environment's setup script.
 
 ## Risks
@@ -339,4 +342,5 @@ Each has a default the plan assumes. Override any of them.
    Default: no for now. It would be one more source of request eligibility, not a new
    mechanism.
 9. **The product's name and final domain.** Default: `pullups.haydenroszell.com` until
-   it's bought, and the move happens before the M2 checkpoint.
+   it's bought. M2 deploys on it while the operator is the only account; the move happens
+   before links go to anyone else, at the M2 checkpoint.

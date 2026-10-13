@@ -25,6 +25,7 @@ relevant section there before changing any of them.
 | `npm run typecheck` | `tsc` over the app and the service worker config |
 | `npm test` | vitest |
 | `npm run check` | typecheck + test — run before calling a change done |
+| `npm run eval:compose` | run `test/fixtures/compose/descriptions.json` against the real model on Bedrock — costs money, needs AWS credentials, never in CI |
 
 ## Tests
 
