@@ -1,0 +1,226 @@
+{
+ "nowMs": "2026-10-08T18:00:00-06:00",
+ "timeZone": "America/Denver",
+ "known": [
+  {
+   "id": "pull-up",
+   "name": "Pull-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "chin-up",
+   "name": "Chin-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "push-up",
+   "name": "Push-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "dip",
+   "name": "Dip",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "muscle-up",
+   "name": "Muscle-up",
+   "measure": "count",
+   "unit": "rep"
+  },
+  {
+   "id": "front-lever",
+   "name": "Front lever",
+   "measure": "time"
+  },
+  {
+   "id": "plank",
+   "name": "Plank",
+   "measure": "time"
+  },
+  {
+   "id": "dead-hang",
+   "name": "Dead hang",
+   "measure": "time"
+  },
+  {
+   "id": "x-k3p9aaaaaaaaaaaa",
+   "name": "Red Rocks stairs",
+   "measure": "count",
+   "unit": "lap"
+  }
+ ],
+ "cases": [
+  {
+   "name": "plain sets",
+   "text": "4x8 wide pull-ups",
+   "expected": [
+    {
+     "exercise": "pull-up",
+     "reps": 8,
+     "variations": [
+      "wide-grip"
+     ]
+    },
+    {
+     "exercise": "pull-up",
+     "reps": 8,
+     "variations": [
+      "wide-grip"
+     ]
+    },
+    {
+     "exercise": "pull-up",
+     "reps": 8,
+     "variations": [
+      "wide-grip"
+     ]
+    },
+    {
+     "exercise": "pull-up",
+     "reps": 8,
+     "variations": [
+      "wide-grip"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "the Red Rocks example",
+   "text": "Ran the Red Rocks stairs 3 times, 20 push-ups at the top each time, then a 45 second front lever tuck",
+   "expected": [
+    {
+     "exercise": "x-k3p9aaaaaaaaaaaa",
+     "reps": 1
+    },
+    {
+     "exercise": "push-up",
+     "reps": 20
+    },
+    {
+     "exercise": "x-k3p9aaaaaaaaaaaa",
+     "reps": 1
+    },
+    {
+     "exercise": "push-up",
+     "reps": 20
+    },
+    {
+     "exercise": "x-k3p9aaaaaaaaaaaa",
+     "reps": 1
+    },
+    {
+     "exercise": "push-up",
+     "reps": 20
+    },
+    {
+     "exercise": "front-lever",
+     "holdSeconds": 45,
+     "variations": [
+      "tuck"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a mixed session",
+   "text": "10 chins, 3 sets of 12 dips, 5 muscle ups",
+   "expected": [
+    {
+     "exercise": "chin-up",
+     "reps": 10
+    },
+    {
+     "exercise": "dip",
+     "reps": 12
+    },
+    {
+     "exercise": "dip",
+     "reps": 12
+    },
+    {
+     "exercise": "dip",
+     "reps": 12
+    },
+    {
+     "exercise": "muscle-up",
+     "reps": 5
+    }
+   ]
+  },
+  {
+   "name": "holds in minutes",
+   "text": "plank for a minute and a half, then a 30s dead hang",
+   "expected": [
+    {
+     "exercise": "plank",
+     "holdSeconds": 90
+    },
+    {
+     "exercise": "dead-hang",
+     "holdSeconds": 30
+    }
+   ]
+  },
+  {
+   "name": "added weight",
+   "text": "5 pull-ups with a 25 lb plate",
+   "expected": [
+    {
+     "exercise": "pull-up",
+     "reps": 5,
+     "addedWeightLbs": 25
+    }
+   ]
+  },
+  {
+   "name": "a relative time",
+   "text": "yesterday evening I did 30 push ups",
+   "expected": [
+    {
+     "exercise": "push-up",
+     "reps": 30,
+     "minutesAgo": [
+      1260,
+      1620
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a new counted exercise",
+   "text": "climbed the office stairs 6 flights",
+   "expected": [
+    {
+     "exercise": {
+      "new": "office stairs",
+      "measure": "count"
+     },
+     "reps": 6
+    }
+   ]
+  },
+  {
+   "name": "a new timed exercise",
+   "text": "wall sit 2 minutes",
+   "expected": [
+    {
+     "exercise": {
+      "new": "wall sit",
+      "measure": "time"
+     },
+     "holdSeconds": 120
+    }
+   ]
+  },
+  {
+   "name": "junk",
+   "text": "what's the weather like tomorrow?",
+   "expected": []
+  }
+ ]
+}

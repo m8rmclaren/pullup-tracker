@@ -351,6 +351,34 @@ describe('Tracker', () => {
     expect(tracker.padAddedWeightLbs('2026-10-08')).toBe(45);
     expect(tracker.padAddedWeightLbs('2026-10-09')).toBe(0);
   });
+
+  it('keeps the pad weight per exercise, and reads one chosen before that as the pull-up weight', () => {
+    const storage = new MemoryStorage();
+    storage.setItem('pullups:v1', JSON.stringify({ version: 1, entries: [], outbox: [], cursor: 0, account: null, lastSyncAt: null, settings: { token: '', goal: 35, padAddedWeightLbs: 25, padAddedWeightDay: '2026-10-08' } }));
+    const { tracker } = makeTracker(async () => EMPTY_RESPONSE, storage);
+    expect(tracker.padAddedWeightLbs('2026-10-08')).toBe(25);
+    tracker.setPadAddedWeight(10, '2026-10-08', 'dip');
+    expect(tracker.padAddedWeightLbs('2026-10-08', 'dip')).toBe(10);
+    expect(tracker.padAddedWeightLbs('2026-10-08')).toBe(25);
+    expect(tracker.padAddedWeightLbs('2026-10-08', 'push-up')).toBe(0);
+    tracker.setPadAddedWeight(5, '2026-10-09', 'dip');
+    expect(tracker.padAddedWeightLbs('2026-10-09')).toBe(0);
+  });
+
+  it('prefills the pad from the last set until a context is chosen, then keeps that', () => {
+    const { tracker } = makeTracker(async () => EMPTY_RESPONSE);
+    expect(tracker.padContext()).toEqual({ exerciseId: 'pull-up', variationIds: [] });
+    tracker.log({ exerciseId: 'push-up', variationIds: ['wide-grip'], reps: 10 });
+    expect(tracker.padContext()).toEqual({ exerciseId: 'push-up', variationIds: ['wide-grip'] });
+    tracker.setPadContext({ exerciseId: 'plank', variationIds: [] });
+    tracker.log({ exerciseId: 'dip', reps: 8 });
+    expect(tracker.padContext()).toEqual({ exerciseId: 'plank', variationIds: [] });
+    const copy = tracker.logTemplate({ exerciseId: 'plank', variationIds: [], holdSeconds: 45 });
+    expect(copy).toMatchObject({ exerciseId: 'plank', holdSeconds: 45 });
+    expect('variationIds' in copy).toBe(false);
+    const crowded = tracker.log({ reps: 3, variationIds: ['v-aaaaaaaaaaaaaaaa', 'v-bbbbbbbbbbbbbbbb', 'v-cccccccccccccccc', 'v-dddddddddddddddd', 'v-eeeeeeeeeeeeeeee', 'v-ffffffffffffffff', 'v-gggggggggggggggg'] });
+    expect(crowded.variationIds).toHaveLength(6);
+  });
 });
 
 describe('backoffMs', () => {

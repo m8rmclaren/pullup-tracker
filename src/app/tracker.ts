@@ -1,16 +1,21 @@
-import { type Account, type Entry, type IncomingRequest, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
-import { type Measure, builtInExercise, builtInVariation } from '../shared/catalog';
+import { type Account, type Entry, type IncomingRequest, type SyncRequest, type SyncResponse, MAX_HOLD_SECONDS, MAX_PUSHED_ENTRIES, MAX_REPS, MAX_VARIATIONS, MIN_HOLD_SECONDS, MIN_REPS, PROTOCOL_VERSION, clampAddedWeight, mergeInto, normalizeEntry } from '../shared/model';
+import { type Measure, PULL_UP, builtInExercise, builtInVariation } from '../shared/catalog';
 import { type Definition, type ExerciseDefinition, MAX_PUSHED_DEFINITIONS, type VariationDefinition, definitionKeyOf, definitionKeyString, isVariationDefinition, mergeDefinitionsInto } from '../shared/definitions';
 import { PROFILE_REGISTERS, type ProfilePatch } from '../shared/profile';
+import { type SetContext, type SetTemplate, contextOf, lastSet } from '../shared/pad';
 import { DEFAULT_TIME_ZONE } from '../shared/time';
 
 export interface Settings {
   token: string;
   goal: number;
-  /** Added weight the quick pad logs with; 0 is bodyweight. */
+  /** Pull-up added weight the pad logs with, from before it was per exercise; read as padAddedWeightsLbs['pull-up']. */
   padAddedWeightLbs: number;
-  /** The day padAddedWeightLbs was chosen. It resets to bodyweight the next day, so a forgotten belt doesn't weight tomorrow's sets. */
+  /** The day the pad's added weights were chosen. They reset to bodyweight the next day, so a forgotten belt doesn't weight tomorrow's sets. */
   padAddedWeightDay: string;
+  /** Added weight per exercise the pad logs with, for padAddedWeightDay; absent means bodyweight. */
+  padAddedWeightsLbs?: Record<string, number>;
+  /** The exercise and configuration the pad logs, sticky until changed. Absent: the last set's. */
+  padContext?: SetContext;
 }
 
 /** `outdated`: the server no longer speaks this client's protocol; nothing syncs until the app reloads into a newer version. */
@@ -265,7 +270,9 @@ export class Tracker {
 
   /** Logs one set of any exercise: `reps` for a counted one, `holdSeconds` for a timed one. */
   log(set: { exerciseId?: string; variationIds?: string[]; reps?: number; holdSeconds?: number; doneAt?: number; addedWeightLbs?: number }): Entry {
-    const entry = { id: this.newId(), doneAt: set.doneAt ?? this.now(), updatedAt: this.now(), exerciseId: set.exerciseId, variationIds: set.variationIds, addedWeightLbs: clampAddedWeight(set.addedWeightLbs ?? 0) } as Entry;
+    // More variations than a set may hold would be refused by the server and wedge the outbox.
+    const variationIds = set.variationIds ? [...new Set(set.variationIds)].slice(0, MAX_VARIATIONS) : undefined;
+    const entry = { id: this.newId(), doneAt: set.doneAt ?? this.now(), updatedAt: this.now(), exerciseId: set.exerciseId, variationIds, addedWeightLbs: clampAddedWeight(set.addedWeightLbs ?? 0) } as Entry;
     if (set.holdSeconds !== undefined) entry.holdSeconds = clampHoldSeconds(set.holdSeconds);
     else entry.reps = clampReps(set.reps ?? MIN_REPS);
     const normalized = normalizeEntry(entry);
@@ -296,13 +303,40 @@ export class Tracker {
     return normalized;
   }
 
-  /** The pad's added weight for `day`; a choice made on an earlier day has expired. */
-  padAddedWeightLbs(day: string): number {
-    return this.settings.padAddedWeightDay === day ? this.settings.padAddedWeightLbs : 0;
+  /** The pad's added weight for an exercise on `day`; a choice made on an earlier day has expired. */
+  padAddedWeightLbs(day: string, exerciseId = PULL_UP): number {
+    if (this.settings.padAddedWeightDay !== day) return 0;
+    const weights = this.settings.padAddedWeightsLbs ?? { [PULL_UP]: this.settings.padAddedWeightLbs };
+    return weights[exerciseId] ?? 0;
   }
 
-  setPadAddedWeight(addedWeightLbs: number, day: string): void {
-    this.updateSettings({ padAddedWeightLbs: clampAddedWeight(addedWeightLbs), padAddedWeightDay: day });
+  setPadAddedWeight(addedWeightLbs: number, day: string, exerciseId = PULL_UP): void {
+    const current = this.settings.padAddedWeightDay === day ? (this.settings.padAddedWeightsLbs ?? { [PULL_UP]: this.settings.padAddedWeightLbs }) : {};
+    const padAddedWeightsLbs = { ...current, [exerciseId]: clampAddedWeight(addedWeightLbs) };
+    this.updateSettings({ padAddedWeightsLbs, padAddedWeightLbs: padAddedWeightsLbs[PULL_UP] ?? 0, padAddedWeightDay: day });
+  }
+
+  /** What the pad logs: the context last chosen, else the last set's, else a plain pull-up. */
+  padContext(): SetContext {
+    if (this.settings.padContext) return this.settings.padContext;
+    const last = lastSet(this.entries.values());
+    return last ? contextOf(last) : { exerciseId: PULL_UP, variationIds: [] };
+  }
+
+  setPadContext(context: SetContext): void {
+    this.updateSettings({ padContext: { exerciseId: context.exerciseId, variationIds: [...context.variationIds].sort() } });
+  }
+
+  /** Logs a copy of a set: a repeat, a queue item, a confirmed draft. */
+  logTemplate(template: SetTemplate, doneAt = this.now()): Entry {
+    return this.log({ ...template, doneAt });
+  }
+
+  /** Definitions fetched outside a sync (Add to mine): the server already has them, so nothing is queued. */
+  receiveDefinitions(definitions: Definition[]): void {
+    if (!mergeDefinitionsInto(this.definitions, definitions).length) return;
+    this.persist();
+    this.notifyListeners();
   }
 
   remove(id: string): void {

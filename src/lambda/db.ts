@@ -109,9 +109,17 @@ export interface FriendRequest {
   declinedAt?: number;
 }
 
-/** A per-user, per-day counter (friend requests sent), put with a version since the API role can't UpdateItem. */
+/** A per-user, per-day counter (friend requests sent, composes), put with a version since the API role can't UpdateItem. */
 export interface DailyCount {
   count: number;
+  version: number;
+}
+
+export type DailyCountKind = 'requests' | 'compose';
+
+/** What the composer has cost across all accounts in a calendar month (UTC), versioned like a counter. */
+export interface ComposeSpend {
+  spentMicroUsd: number;
   version: number;
 }
 
@@ -248,9 +256,13 @@ export interface Db {
   acceptRequest(userId: string, fromUserId: string, createdAt: number): Promise<void>;
   /** Deletes the sender's side, and the receiver's unless it is a tombstone. */
   cancelRequest(fromUserId: string, toUserId: string): Promise<void>;
-  getDailyCount(userId: string, kind: 'requests', day: string): Promise<DailyCount | null>;
+  getDailyCount(userId: string, kind: DailyCountKind, day: string): Promise<DailyCount | null>;
   /** Conditional on the stored version (null: none yet); expires with `ttlEpochSeconds`. */
-  putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number): Promise<void>;
+  putDailyCount(userId: string, kind: DailyCountKind, day: string, count: DailyCount, expectedVersion: number | null, ttlEpochSeconds: number): Promise<void>;
+  /** `month` is YYYY-MM in UTC. */
+  getComposeSpend(month: string): Promise<ComposeSpend | null>;
+  /** Same precondition scheme as putDailyCount, on `version`. */
+  putComposeSpend(month: string, spend: ComposeSpend, expectedVersion: number | null): Promise<void>;
 
   /** Accounts the empty-account sweep looks at on `day`. */
   sweepMarkersFor(day: string): Promise<string[]>;
@@ -289,6 +301,8 @@ export class MemoryDb implements Db {
   sentRequestsByUser = new Map<string, Map<string, FriendRequest>>();
   /** `${userId}|${kind}|${day}` → count */
   dailyCounts = new Map<string, DailyCount>();
+  /** month → spend */
+  composeSpends = new Map<string, ComposeSpend>();
 
   private userEntries(userId: string) {
     let entriesById = this.entries.get(userId);
@@ -616,15 +630,25 @@ export class MemoryDb implements Db {
     if (this.requestsIn(this.receivedRequests, toUserId).get(fromUserId)?.declinedAt === undefined) this.requestsIn(this.receivedRequests, toUserId).delete(fromUserId);
   }
 
-  async getDailyCount(userId: string, kind: 'requests', day: string) {
+  async getDailyCount(userId: string, kind: DailyCountKind, day: string) {
     const count = this.dailyCounts.get(`${userId}|${kind}|${day}`);
     return count ? { ...count } : null;
   }
 
-  async putDailyCount(userId: string, kind: 'requests', day: string, count: DailyCount, expectedVersion: number | null) {
+  async putDailyCount(userId: string, kind: DailyCountKind, day: string, count: DailyCount, expectedVersion: number | null) {
     const key = `${userId}|${kind}|${day}`;
     if ((this.dailyCounts.get(key)?.version ?? null) !== expectedVersion) throw new PreconditionFailed();
     this.dailyCounts.set(key, { ...count });
+  }
+
+  async getComposeSpend(month: string) {
+    const spend = this.composeSpends.get(month);
+    return spend ? { ...spend } : null;
+  }
+
+  async putComposeSpend(month: string, spend: ComposeSpend, expectedVersion: number | null) {
+    if ((this.composeSpends.get(month)?.version ?? null) !== expectedVersion) throw new PreconditionFailed();
+    this.composeSpends.set(month, { ...spend });
   }
 
   async sweepMarkersFor(day: string) {

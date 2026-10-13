@@ -116,3 +116,28 @@ describe('created definitions in sync', () => {
     expect((await sync(AMA_TOKEN, { pushedDefinitions: tooMany })).status).toBe(400);
   });
 });
+
+describe('Add to mine', () => {
+  const adopt = (db: MemoryDb, token: string, body: Record<string, unknown>) =>
+    route({ method: 'POST', path: '/api/exercises/adopt', headers: { 'x-pullup-token': token }, body: JSON.stringify(body) }, { db, clock: { now: () => OCT8 } });
+
+  it("adopts a friend's exercise, which every sync after returns", async () => {
+    const { db, sync } = setup();
+    await sync(AMA_TOKEN, { pushedDefinitions: [STAIRS] });
+    await db.befriend('ama', 'ben', OCT8);
+    const adopted = await adopt(db, BEN_TOKEN, { exerciseId: STAIRS.id, friendId: 'ama' });
+    expect(adopted).toEqual({ status: 200, body: { definition: { ...STAIRS, createdBy: 'ama' } } });
+    expect((await sync(BEN_TOKEN)).body.definitions).toEqual([{ ...STAIRS, createdBy: 'ama' }]);
+  });
+
+  it("refuses with one 404 for a non-friend, an exercise the friend doesn't have, and junk", async () => {
+    const { db, sync } = setup();
+    await sync(AMA_TOKEN, { pushedDefinitions: [STAIRS] });
+    expect((await adopt(db, BEN_TOKEN, { exerciseId: STAIRS.id, friendId: 'ama' })).status).toBe(404);
+    await db.befriend('ama', 'ben', OCT8);
+    expect((await adopt(db, BEN_TOKEN, { exerciseId: 'x-aaaaaaaaaaaaaaaa', friendId: 'ama' })).status).toBe(404);
+    expect((await adopt(db, BEN_TOKEN, { exerciseId: 'pull-up', friendId: 'ama' })).status).toBe(404);
+    expect((await adopt(db, BEN_TOKEN, { exerciseId: STAIRS.id })).status).toBe(404);
+    expect(await db.adoptedDefinitionKeys('ben')).toEqual([]);
+  });
+});

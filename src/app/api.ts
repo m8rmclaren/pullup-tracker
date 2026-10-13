@@ -1,5 +1,7 @@
 import { type PublicKeyCredentialCreationOptionsJSON, type PublicKeyCredentialRequestOptionsJSON, startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import type { Account, ChallengeBoardResponse, Suggestion, ChallengeListItem, ChallengesResponse, FriendsResponse, LeaderboardResponse, ProfileViewResponse, InviteResponse, PasskeySummary, RedeemedLink, ResolvedLink, SessionResponse, SignupResponse, SyncRequest, SyncResponse } from '../shared/model';
+import type { ComposeRequest, ComposeResponse } from '../shared/compose';
+import type { Definition } from '../shared/definitions';
 import type { ProfilePatch } from '../shared/profile';
 import { HttpError, type ProfileTransport, type Transport } from './tracker';
 
@@ -147,3 +149,7 @@ export const respondToFriendRequest = (userId: string, accept: boolean, token: s
 export const cancelFriendRequest = (userId: string, token: string) => post<object>('/api/friends/cancel', { userId }, token);
 
 export const fetchSuggestions = (token: string) => post<{ suggestions: Suggestion[] }>('/api/friends/suggestions', {}, token);
+
+export const addToMine = (exerciseId: string, friendId: string, token: string) => post<{ definition: Definition }>('/api/exercises/adopt', { exerciseId, friendId }, token);
+
+export const composeDraft = (request: ComposeRequest, token: string) => post<ComposeResponse>('/api/compose', request, token);

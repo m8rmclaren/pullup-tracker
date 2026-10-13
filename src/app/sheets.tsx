@@ -1,11 +1,13 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { type Entry, type PasskeySummary, MAX_ADDED_WEIGHT_LBS, MAX_HOLD_SECONDS, MAX_NAME_LENGTH, MAX_REPS, MIN_HOLD_SECONDS, MIN_REPS, clampAddedWeight, cleanName, exerciseIdOf, formatAddedWeight, isValidEntry } from '../shared/model';
+import { PULL_UP } from '../shared/catalog';
+import type { SetContext } from '../shared/pad';
 import { MIN_DAILY_GOAL_REPS } from '../shared/profile';
 import { dailyTotals } from '../shared/stats';
 import { dayKey, formatClock, formatDay, timeOfDay, wallClockToEpochMs } from '../shared/time';
 import { addPasskey, createDeviceLink, deviceLink, isPasskeySupported, listPasskeys, parseDeviceLink, parseJoinLink, passkeyErrorMessage, redeemDeviceLink, signInWithPasskey, signUpWithPasskey } from './api';
-import { exerciseLabel, formatAmount, formatHoldSeconds, unitLookup } from './labels';
+import { exerciseLabel, exerciseName, formatAmount, formatHoldSeconds, unitLookup } from './labels';
 import { haptic } from './hooks';
 import type { Tracker } from './tracker';
 
@@ -92,20 +94,20 @@ function WeightPicker({ value, onChange }: { value: number; onChange: (addedWeig
 }
 
 /** Chooses the added weight the quick pad logs with, for the rest of today. */
-export function PadWeightSheet({ tracker, now, timeZone, onClose }: { tracker: Tracker; now: number; timeZone: string; onClose: () => void }) {
+export function PadWeightSheet({ tracker, exerciseId, now, timeZone, onClose }: { tracker: Tracker; exerciseId: string; now: number; timeZone: string; onClose: () => void }) {
   const today = dayKey(now, timeZone);
-  const [addedWeightLbs, setAddedWeightLbs] = useState(tracker.padAddedWeightLbs(today));
+  const [addedWeightLbs, setAddedWeightLbs] = useState(tracker.padAddedWeightLbs(today, exerciseId));
   return (
-    <Sheet title="Added weight" onClose={onClose}>
+    <Sheet title={`Added weight · ${exerciseName(exerciseId, tracker)}`} onClose={onClose}>
       <WeightPicker value={addedWeightLbs} onChange={setAddedWeightLbs} />
-      <p class="muted small">Quick-tap sets use this weight until midnight, then go back to bodyweight.</p>
+      <p class="muted small">Sets of this exercise use this weight until midnight, then go back to bodyweight.</p>
       <div class="sheet__actions">
         <button
           type="button"
           class="btn btn--primary"
           onClick={() => {
             haptic(15);
-            tracker.setPadAddedWeight(addedWeightLbs, today);
+            tracker.setPadAddedWeight(addedWeightLbs, today, exerciseId);
             onClose();
           }}
         >
@@ -125,6 +127,8 @@ interface EntrySheetProps {
   entry?: Entry;
   /** For new entries: the day to log into (defaults to today). */
   day?: string;
+  /** For new entries: the exercise and configuration (defaults to a plain pull-up). */
+  context?: SetContext;
   defaultReps: number;
   /** For new entries: the starting added weight. */
   defaultAddedWeightLbs?: number;
@@ -135,10 +139,10 @@ interface EntrySheetProps {
   onDeleted?: (entry: Entry) => void;
 }
 
-export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeightLbs = 0, now, timeZone, onClose, onLogged, onDeleted }: EntrySheetProps) {
+export function EntrySheet({ tracker, entry, day, context = { exerciseId: PULL_UP, variationIds: [] }, defaultReps, defaultAddedWeightLbs = 0, now, timeZone, onClose, onLogged, onDeleted }: EntrySheetProps) {
   const today = dayKey(now, timeZone);
   const initialDay = entry ? dayKey(entry.doneAt, timeZone) : (day ?? today);
-  const isHold = entry?.holdSeconds !== undefined;
+  const isHold = entry ? entry.holdSeconds !== undefined : tracker.exercise(context.exerciseId)?.measure === 'time';
   const [amount, setAmount] = useState(entry?.reps ?? entry?.holdSeconds ?? defaultReps);
   const [addedWeightLbs, setAddedWeightLbs] = useState(entry ? (entry.addedWeightLbs ?? 0) : defaultAddedWeightLbs);
   const [date, setDate] = useState(initialDay);
@@ -157,13 +161,13 @@ export function EntrySheet({ tracker, entry, day, defaultReps, defaultAddedWeigh
     if (entry) {
       tracker.update(entry.id, isHold ? { holdSeconds: amount, addedWeightLbs, doneAt: resolveDoneAt() } : { reps: amount, addedWeightLbs, doneAt: resolveDoneAt() });
     } else {
-      onLogged?.(tracker.add(amount, resolveDoneAt(), addedWeightLbs));
+      onLogged?.(tracker.log({ ...context, ...(isHold ? { holdSeconds: amount } : { reps: amount }), doneAt: resolveDoneAt(), addedWeightLbs }));
     }
     onClose();
   };
 
   return (
-    <Sheet title={entry ? `Edit set${exerciseLabel(entry, tracker) ? ` · ${exerciseLabel(entry, tracker)}` : ''}` : 'Log a set'} onClose={onClose}>
+    <Sheet title={entry ? `Edit set · ${exerciseName(exerciseIdOf(entry), tracker)}` : `Log a set · ${exerciseName(context.exerciseId, tracker)}`} onClose={onClose}>
       {isHold ? <Stepper value={amount} onChange={setAmount} min={MIN_HOLD_SECONDS} max={MAX_HOLD_SECONDS} label="Seconds" format={formatHoldSeconds} /> : <Stepper value={amount} onChange={setAmount} label="Reps" />}
       <div class="chips" role="group" aria-label={isHold ? 'Common hold times' : 'Common rep counts'}>
         {(isHold ? HOLD_CHIPS_SECONDS : REP_CHIPS).map((chipAmount) => (

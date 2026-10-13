@@ -1,12 +1,12 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { type BoardDay, type BoardMetric, type BoardPeriod, type BoardRow, type BoardSpec, evaluateBoard, requestWindow } from '../shared/boards';
-import { builtInExercise } from '../shared/catalog';
+import { builtInExercise, isCreatedExerciseId } from '../shared/catalog';
 import type { Definition, ExerciseDefinition } from '../shared/definitions';
 import type { LeaderboardResponse, ProfileViewResponse } from '../shared/model';
 import { exerciseDayTotals } from '../shared/stats';
 import { addDays, dayKey, formatDay } from '../shared/time';
-import { fetchLeaderboard, fetchProfile } from './api';
+import { addToMine, fetchLeaderboard, fetchProfile } from './api';
 import { formatHoldSeconds } from './labels';
 import { Sheet } from './sheets';
 import type { ExerciseInfo, Tracker } from './tracker';
@@ -160,10 +160,20 @@ function currentStreak(days: BoardDay[], today: string): number {
 export function ProfileSheet({ tracker, userId, onClose }: { tracker: Tracker; userId: string; onClose: () => void }) {
   const [view, setView] = useState<ProfileViewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addingId, setAddingId] = useState<string | null>(null);
   useEffect(() => {
     fetchProfile(userId, tracker.settings.token).then(setView, (fetchError) => setError(fetchError instanceof Error ? fetchError.message : String(fetchError)));
   }, [userId]);
   const lookup = useMemo(() => exerciseLookup(tracker, view?.definitions ?? []), [tracker, view]);
+  const add = async (exerciseId: string) => {
+    setAddingId(exerciseId);
+    try {
+      tracker.receiveDefinitions([(await addToMine(exerciseId, userId, tracker.settings.token)).definition]);
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : String(addError));
+    }
+    setAddingId(null);
+  };
 
   if (!view) {
     return (
@@ -207,11 +217,21 @@ export function ProfileSheet({ tracker, userId, onClose }: { tracker: Tracker; u
                 {total} · best {best}
                 {summary.bests.bestAddedWeightLbs ? ` · +${summary.bests.bestAddedWeightLbs} lb` : ''}
               </span>
+              {isCreatedExerciseId(summary.exerciseId) && userId !== tracker.account?.id ? (
+                tracker.exercise(summary.exerciseId) ? (
+                  <span class="muted small">In yours</span>
+                ) : (
+                  <button type="button" class="btn-text" disabled={addingId !== null} onClick={() => void add(summary.exerciseId)}>
+                    {addingId === summary.exerciseId ? 'Adding…' : 'Add to mine'}
+                  </button>
+                )
+              ) : null}
             </li>
           );
         })}
         {view.exercises.length === 0 ? <li class="muted small">Nothing logged yet.</li> : null}
       </ul>
+      {error ? <p class="muted small">{error}</p> : null}
       <h3 class="sheet__subhead">Recent days</h3>
       <ul class="history">
         {recentDays.map((day) => (

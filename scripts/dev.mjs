@@ -11,5 +11,7 @@ await build({
   format: 'esm',
   outfile: 'dist/dev/server.mjs',
   logLevel: 'warning',
+  // Some bundled dependencies (the Bedrock SDK's AWS signing) are CommonJS and require Node built-ins.
+  banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
 });
 await import(new URL('../dist/dev/server.mjs', import.meta.url).href);

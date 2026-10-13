@@ -7,7 +7,8 @@
     "dev": "node scripts/dev.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "eval:compose": "node scripts/eval-compose.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
@@ -16,6 +17,8 @@
     "vitest": "^5.0.3"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.34.4",
+    "@anthropic-ai/sdk": "^0.133.0",
     "@aws-sdk/client-dynamodb": "^3.1147.0",
     "@aws-sdk/lib-dynamodb": "^3.1147.0",
     "@simplewebauthn/browser": "^14.0.0",

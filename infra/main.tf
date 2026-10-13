@@ -171,6 +171,15 @@ data "aws_iam_policy_document" "api" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.api.arn}:*"]
   }
+  # Describe calls Claude through Claude in Amazon Bedrock (bedrock-mantle.<region>.api.aws).
+  dynamic "statement" {
+    for_each = var.compose_enabled ? [1] : []
+    content {
+      sid       = "ComposeModel"
+      actions   = ["bedrock-mantle:CreateInference"]
+      resources = ["*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "api" {
@@ -204,6 +213,9 @@ resource "aws_lambda_function" "api" {
       RP_ID       = var.domain_name
       APP_ORIGIN  = local.custom_domain ? "https://${var.domain_name}" : ""
       SIGNUP_OPEN = tostring(var.signup_open)
+      # Empty turns Describe off: /api/compose answers 503 and the pad is the way in.
+      COMPOSE_MODEL_ID            = var.compose_enabled ? var.compose_model_id : ""
+      COMPOSE_MONTHLY_CEILING_USD = tostring(var.compose_monthly_ceiling_usd)
     }
   }
 

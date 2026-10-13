@@ -2,6 +2,7 @@ import { isCreatedExerciseId, isCreatedVariationId } from '../shared/catalog';
 import { type Definition, type DefinitionKey, type ExerciseDefinition, definitionKeyOf, definitionKeyString, isVariationDefinition, normalizeDefinition, pickDefinitionWinner, sameDefinitionVersion } from '../shared/definitions';
 import { type Entry, exerciseIdOf } from '../shared/model';
 import { type Db, type StoredDefinition, PreconditionFailed } from './db';
+import { RequestError } from './errors';
 import { type Clock, mapWithConcurrency } from './sync';
 
 const MAX_ATTEMPTS = 8;
@@ -93,4 +94,23 @@ export async function definitionsForSync(db: Db, userId: string, pushedEntries: 
   for (const key of returnedEntries.flatMap(definitionKeysOf)) neededKeys.set(definitionKeyString(key), key);
   const definitions = await db.getDefinitions([...neededKeys.values()]);
   return [...definitions.values()].map(({ version: _, ...definition }: StoredDefinition) => definition as Definition);
+}
+
+/**
+ * Add to mine: adopts an exercise a friend has, so it joins your picker under the same id and
+ * you both land on one board. Anything you can't see gets the same 404 as an id that doesn't
+ * exist, so it can't probe for exercises or accounts.
+ */
+export async function adoptFriendsExercise(db: Db, userId: string, body: Record<string, unknown>, clock: Clock): Promise<{ definition: Definition }> {
+  const { exerciseId, friendId } = body;
+  const notFound = new RequestError(404, 'not found');
+  if (typeof exerciseId !== 'string' || !isCreatedExerciseId(exerciseId) || typeof friendId !== 'string' || !friendId) throw notFound;
+  if (friendId !== userId && !(await db.isFriend(userId, friendId))) throw notFound;
+  const friendsKeys = await db.adoptedDefinitionKeys(friendId);
+  if (!friendsKeys.some((key) => key.exerciseId === exerciseId && !key.variationId)) throw notFound;
+  const stored = (await db.getDefinitions([{ exerciseId }])).get(exerciseId);
+  if (!stored) throw notFound;
+  await db.adoptDefinition(userId, { exerciseId }, clock.now());
+  const { version: _, ...definition } = stored;
+  return { definition: definition as Definition };
 }

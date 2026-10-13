@@ -3,7 +3,8 @@ import { isValidProfilePatch } from '../shared/profile';
 import { type Definition, MAX_PUSHED_DEFINITIONS, isValidDefinition } from '../shared/definitions';
 import { createDeviceLink, redeemDeviceLink } from './accounts';
 import { leaderboard, viewProfile } from './boards';
-import { definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
+import { type ComposeConfig, compose } from './compose';
+import { adoptFriendsExercise, definitionsForSync, findMeasureMismatch, mergePushedDefinitions } from './definitions';
 import { RequestError } from './errors';
 import { friendsResponse, rotateFriendLink } from './friends';
 import { challengeBoard, challengeLink, createChallenge, leaveChallenge, listChallenges } from './challenges';
@@ -36,6 +37,8 @@ export interface RouteDeps {
   webAuthn?: WebAuthnConfig;
   /** New accounts can be made only when this is true. Signing in and adding passkeys work either way. */
   isSignupOpen?: boolean;
+  /** Absent where no model is configured: /api/compose answers 503 and the pad is the way in. */
+  compose?: ComposeConfig;
 }
 
 type Handler = (body: Record<string, unknown>) => Promise<HttpResponse>;
@@ -108,6 +111,8 @@ export async function route(request: HttpRequest, deps: RouteDeps): Promise<Http
     '/api/challenges/board': signedIn(async (userId, body) => ok(await challengeBoard(deps.db, userId, body.challengeId))),
     '/api/leaderboard': signedIn(async (userId, body) => ok(await leaderboard(deps.db, userId, body))),
     '/api/profile/view': signedIn(async (userId, body) => ok(await viewProfile(deps.db, userId, body, clock))),
+    '/api/compose': signedIn(async (userId, body) => ok(await compose(deps.db, userId, body, deps.compose, clock))),
+    '/api/exercises/adopt': signedIn(async (userId, body) => ok(await adoptFriendsExercise(deps.db, userId, body, clock))),
     '/api/links/resolve': async (body) => {
       if (!isPlausibleSecret(body.code)) return errorResponse(404, 'This link has expired or was replaced.');
       return ok(await resolveLink(deps.db, body.code, clock));

@@ -9,7 +9,7 @@ formats, the API, auth and the social graph. What the product does with them is 
 | Topic | Decision |
 |---|---|
 | Measures | An exercise is counted (in a unit it names: rep, step, lap, flight…) or timed (seconds). |
-| Composer model | `/api/compose` → Claude Haiku 5.5 on every client. Apple's on-device model is a later cost and privacy optimization on iOS. |
+| Composer model | `/api/compose` → Claude Haiku 5.5 through Claude in Amazon Bedrock, on every client. The Lambda role's IAM credentials, no API key. Apple's on-device model is a later cost and privacy optimization on iOS. |
 | Links | A short code resolving to a stored, typed payload: `friend` or `challenge` to start. Every kind makes a friendship with whoever shared it. New kinds are additive. |
 | Friend requests | To anyone you share a challenge with. Accepted in one tap, mutual requests befriend at once, declines are silent and final. |
 | Challenges | A stored group: one exercise, a window of at most 62 days, an optional target. Members see each other's totals for that exercise in that window, and nothing else. Every member has their own link. |
@@ -120,7 +120,7 @@ variation is at most one per group.
 - **Your adopted list** is what every sync returns: one `U#<userId> A#<key>` item per
   definition you created or have logged to (see New items). Creating a definition adopts
   it in the same transaction; pushing a set that logs to someone else's adopts it then.
-  M1's challenge join and M2's Add to mine will write the same item. Each sync returns
+  A challenge join and Add to mine (`/api/exercises/adopt`) write the same item. Each sync returns
   every adopted definition, so a rename reaches every device on its next sync, at the
   cost of one query and one batch get per sync.
 - **Duplicates are reduced, not prevented.** The picker and the composer search your
@@ -373,6 +373,7 @@ candidates in M0, while the data is one user's.
 | `U#<userId>` | `F#<friendId>` | friendship (written on both sides in one transaction): createdAt |
 | `U#<userId>` | `L` | the user's current friend link: `code` (readable, see Links) and `codeHash`, so rotating it can delete the old `I#` item. Challenge links aren't tracked here. They expire. |
 | `U#<userId>` | `Q#<day>` | compose usage counter for the day, with `ttlEpochSeconds` |
+| `B#<month>` | `B` | the composer's estimated spend that UTC month across every account: `spentMicroUsd`, `version` |
 | `U#<userId>` | `R#<fromUserId>` | incoming friend request: createdAt, challengeId, declinedAt? |
 | `U#<userId>` | `S#<toUserId>` | the same request from the sender's side, written in the same transaction |
 | `U#<userId>` | `RQ#<day>` | friend requests sent that day, with `ttlEpochSeconds` |
@@ -486,7 +487,13 @@ day total. A built-in exercise has no definition on the wire, so exercises carry
 malformed id all get the same 404, not 403, so ids don't reveal accounts.
 
 **`POST /api/compose`** (see The composer): `{ text, nowMs, timeZone, knownExercises: [{ id, name, measure, unit }] }`
-→ `{ draft }`. Authenticated, capped per user per day.
+→ `{ draft }`, null when the text couldn't be read. Authenticated, capped per user per day
+(429) and across everyone per month (503). Only the exercise names reach the model; the
+client resolves the draft against its own list.
+
+**`POST /api/exercises/adopt`** (Add to mine): `{ exerciseId, friendId }` → `{ definition }`.
+Adopts a created exercise a friend has adopted, so it joins your picker under the same id.
+A non-friend, an exercise they don't have and junk all get the same 404.
 
 **Sign-up and passkeys** (see Auth):
 - `POST /api/signup/options` `{ name, timeZone?, dailyGoalReps?, linkCode? }` → creation
@@ -627,29 +634,42 @@ threshold, then "new". That keeps both models' jobs small, keeps the ids out of 
 reach, and makes resolution testable with fixtures. `repeat` expands into individual sets,
 spaced a second apart so their order survives.
 
-### Haiku, on every client
+### Haiku on Bedrock, on every client
 
 One model means one prompt, one eval loop and no availability branching, before it's
 known whether people use Describe at all.
 
-`/api/compose` calls **Claude Haiku 5.5** (`claude-haiku-5-5`) from the Lambda with
-**structured outputs** (`output_config.format` with a JSON schema, via the TypeScript SDK's
-`messages.parse`), so the response always matches the shape.
+`/api/compose` calls **Claude Haiku 5.5** (`anthropic.claude-haiku-5-5`) through **Claude in
+Amazon Bedrock**, the Messages API at `bedrock-mantle.<region>.api.aws`, with the Bedrock SDK's
+`AnthropicBedrockMantle` client (`src/lambda/bedrock.ts`). Bedrock keeps the whole backend on
+one AWS bill and one set of credentials.
 
-- **The API key** lives in SSM Parameter Store (SecureString) and is read at cold start.
-  It never reaches a client.
-- **Prompt:** a fixed system prompt with the schema rules and a few worked examples
-  (cacheable), then the user's text, local time and known-exercise names.
-- **Cost:** roughly 2,000 input and 300 output tokens a call, at $0.10 / $0.50 per million
-  tokens. About $0.0004 a call, so $0.40 per thousand. A free app can carry that.
-- **Caps:** 30 composes per user per local day (the `Q#<day>` counter), and a monthly
-  spend ceiling set in config. Past the ceiling, the endpoint answers 503 *Describe is
-  resting, use the pad*. The pad always works.
-- **Failure:** a refusal, a timeout (5 s budget) or an invalid draft shows "Couldn't read
-  that" with the text kept, and the pad underneath.
-- **Privacy:** the text goes to Anthropic's API. No name or user id is sent with it. On
-  iOS, the first use asks for consent, because App Review requires disclosure of sending
-  user content to a third-party AI service.
+- **No API key.** The Lambda role signs requests with SigV4 and is allowed
+  `bedrock-mantle:CreateInference` (the boundary in `infra/bootstrap.yaml` allows it too).
+  The model needs access granted once in the Bedrock console. `compose_enabled` turns it
+  on; without it, `COMPOSE_MODEL_ID` is empty and the endpoint answers 503.
+- **One tool, not structured outputs.** Claude in Amazon Bedrock doesn't offer
+  `output_config.format`, so the model answers by calling a single `record_draft` tool whose
+  input schema is the draft. `tool_choice` stays `auto` and the prompt says to call it. The
+  server validates the input with `isValidDraft` whatever arrives, and anything else
+  (prose, a refusal, a malformed draft) is `{ draft: null }`.
+- **Prompt:** a fixed system prompt with the rules and a few worked examples, then the
+  user's text, local time ("Thursday 2026-10-08 18:05") and known-exercise names. Effort is
+  `low`, for the latency budget.
+- **Cost:** roughly 2,000 input and 300 output tokens a call. At Haiku's first-party $0.10 /
+  $0.50 per million tokens that is about $0.0004 a call, $0.40 per thousand; Bedrock prices
+  separately, so the per-token rates are config (`COMPOSE_INPUT_USD_PER_MTOK`,
+  `COMPOSE_OUTPUT_USD_PER_MTOK`).
+- **Caps:** 30 composes per user per local day (the `Q#<day>` counter, counted before the
+  call so failures count), and a monthly spend ceiling (`compose_monthly_ceiling_usd`,
+  default $5). Each call's estimated cost is added to a `B#<month>` item shared by every
+  account, best effort. Past the ceiling, the endpoint answers 503 *Describe is resting,
+  use the pad*. The pad always works.
+- **Failure:** a refusal, a timeout (5 s budget, no retries) or an invalid draft shows
+  "Couldn't read that" with the text kept, and the pad underneath.
+- **Privacy:** the text goes to Claude on Amazon Bedrock. No name or user id is sent with
+  it. On iOS, the first use asks for consent, because App Review requires disclosure of
+  sending user content to a third-party AI service.
 
 ### Later: on-device on iOS
 
@@ -662,11 +682,13 @@ Describe. `/api/compose` stays the fallback.
 
 ### Evaluation
 
-`test/fixtures/compose/` holds descriptions and their expected drafts: plain ("4x8 wide
-pull-ups"), mixed sessions, holds, relative times, unknown exercises, and junk input that
-should return an empty draft. The resolver is tested on them in both languages. The Haiku
-prompt is checked against them by a script run manually, not in CI, because every run
-costs money.
+`test/fixtures/compose/` holds three files. `names.json` pins name matching (the picker's
+search and the resolver's). `drafts.json` pins resolving a model's draft into sets, and
+which drafts are valid; every suite runs it. `descriptions.json` holds descriptions and the
+sets they should become: plain ("4x8 wide pull-ups"), mixed sessions, holds, relative
+times, unknown exercises, and junk input that should return an empty draft. `npm run
+eval:compose` checks the prompt against them on the real model. It is run by hand, not in
+CI, because every run costs money.
 
 ## Shared fixtures
 
@@ -693,7 +715,7 @@ fixtures.
 
 | Risk | Mitigation |
 |---|---|
-| Passkeys bound to the wrong domain | Only the operator registers on the interim domain. Move to the final domain before links go out (the M2 checkpoint). |
+| Passkeys bound to the wrong domain | Only the operator registers on the interim domain, so M0–M2 deploy there. Move to the final domain before links go to anyone else (the M2 checkpoint). |
 | A stale client strips v2 fields | The protocol gate (see API). |
 | A board metric needs data day totals don't hold | Add candidate fields in M0, while there is one user. Later fields need a backfill. |
 | Requests used to probe or spam | Only between members of a shared challenge, 404 for anyone else, 50 a day, silent final declines. |

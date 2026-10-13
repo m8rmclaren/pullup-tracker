@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Entry } from '../src/shared/model';
-import { type ExerciseDayTotal, type UnitLookup, builtInUnit, computeDayTotal, computeStats, dailySeries, dailyTotals, exerciseDayTotals, heaviestSet, trailingAverage, usualReps } from '../src/shared/stats';
+import { type ExerciseDayTotal, type UnitLookup, bestSet, builtInUnit, computeDayTotal, computeStats, dailySeries, dailyTotals, exerciseDailyTotals, exerciseDayTotals, heaviestSet, statsFromTotals, trailingAverage, usualReps } from '../src/shared/stats';
 import { dayKey, wallClockToEpochMs } from '../src/shared/time';
 import { type StatsFixtureCase, expectMatches, instantMs, loadFixture, toEntries } from './fixtures';
 
@@ -23,7 +23,7 @@ describe('stats.json', () => {
     const entries = toEntries(rows);
     const unitOf: UnitLookup = (exerciseId) => builtInUnit(exerciseId) ?? definitions.find((definition) => definition.id === exerciseId)?.unit;
 
-    it.each(checks)('at $now', ({ now, stats, dayTotals: expectedDayTotals, usualReps: expectedUsualReps, heaviestSet: expectedHeaviestSet }) => {
+    it.each(checks)('at $now', ({ now, stats, dayTotals: expectedDayTotals, usualReps: expectedUsualReps, heaviestSet: expectedHeaviestSet, exercises = {} }) => {
       const nowMs = instantMs(now);
       if (stats) expectMatches(computeStats(entries, nowMs, goalReps, timeZone, unitOf), stats);
       if (expectedDayTotals) {
@@ -32,6 +32,13 @@ describe('stats.json', () => {
       }
       if (expectedUsualReps !== undefined) expect(usualReps(entries, nowMs, timeZone)).toBe(expectedUsualReps);
       if (expectedHeaviestSet !== undefined) expect(heaviestSet(entries, nowMs, timeZone)).toEqual(expectedHeaviestSet);
+      for (const [exerciseId, expected] of Object.entries(exercises)) {
+        const totals = exerciseDailyTotals(entries, timeZone, exerciseId);
+        if (expected.dayTotals) expect(Object.fromEntries([...totals.values()].map(({ day, reps, sets }) => [day, { reps, sets }]))).toEqual(expected.dayTotals);
+        if (expected.stats) expectMatches(statsFromTotals(totals, nowMs, goalReps, timeZone), expected.stats);
+        if (expected.bestSet !== undefined) expect(bestSet(entries, nowMs, timeZone, exerciseId)).toEqual(expected.bestSet);
+        if (expected.heaviestSet !== undefined) expect(heaviestSet(entries, nowMs, timeZone, exerciseId)).toEqual(expected.heaviestSet);
+      }
     });
 
     if (dayTotalRecords) {

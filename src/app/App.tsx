@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { PULL_UP } from '../shared/catalog';
 import type { Entry } from '../shared/model';
-import { computeStats, usualReps } from '../shared/stats';
+import { type SetContext, usualAmount } from '../shared/pad';
+import { computeStats } from '../shared/stats';
 import { dayKey, formatDay } from '../shared/time';
 import { parseDeviceLink, parseJoinLink } from './api';
 import { ProfileSheet } from './Board';
 import { ChallengeSheet, CreateChallengeSheet } from './Challenges';
+import { DescribeSheet } from './Describe';
 import { FriendsTab, LinkSheet } from './Friends';
 import { describeSet, unitLookup } from './labels';
 import { useNow, useTracker } from './hooks';
@@ -14,16 +17,17 @@ import type { Tracker } from './tracker';
 import { Trends } from './Trends';
 
 type SheetState =
-  | { kind: 'add'; day?: string }
+  | { kind: 'add'; day?: string; context?: SetContext }
   | { kind: 'edit'; entry: Entry }
   | { kind: 'day'; day: string }
   | { kind: 'settings' }
-  | { kind: 'weight' }
+  | { kind: 'weight'; exerciseId: string }
   | { kind: 'device'; code: string }
   | { kind: 'link'; code: string }
   | { kind: 'profile'; userId: string }
   | { kind: 'challenge'; challengeId: string }
   | { kind: 'newChallenge' }
+  | { kind: 'describe' }
   | null;
 
 interface Toast {
@@ -56,7 +60,6 @@ export function App({ tracker }: { tracker: Tracker }) {
   const entries = useMemo(() => tracker.allEntries(), [tracker, version]);
   const goal = tracker.goal();
   const stats = useMemo(() => computeStats(entries, now, goal, timeZone, unitLookup(tracker)), [entries, now, goal, timeZone, tracker, version]);
-  const usualSetReps = useMemo(() => usualReps(entries, now, timeZone), [entries, now, timeZone]);
 
   const showToast = useCallback((text: string, undo?: () => void) => {
     clearTimeout(toastTimer.current);
@@ -103,15 +106,16 @@ export function App({ tracker }: { tracker: Tracker }) {
             stats={stats}
             now={now}
             timeZone={timeZone}
-            usualSetReps={usualSetReps}
             onLogged={onLogged}
             onEdit={(entry) => setSheet({ kind: 'edit', entry })}
-            onOpenCustomEntry={() => setSheet({ kind: 'add' })}
+            onOpenCustomEntry={(context) => setSheet({ kind: 'add', context })}
             onOpenSettings={() => setSheet({ kind: 'settings' })}
-            onOpenPadWeight={() => setSheet({ kind: 'weight' })}
+            onOpenPadWeight={(exerciseId) => setSheet({ kind: 'weight', exerciseId })}
+            onToast={(text) => showToast(text)}
+            onOpenDescribe={() => setSheet({ kind: 'describe' })}
           />
         ) : tab === 'trends' ? (
-          <Trends entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
+          <Trends tracker={tracker} entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
         ) : (
           <FriendsTab
             key={friendsVersion}
@@ -165,7 +169,17 @@ export function App({ tracker }: { tracker: Tracker }) {
       </nav>
 
       {sheet?.kind === 'add' ? (
-        <EntrySheet tracker={tracker} day={sheet.day} defaultReps={usualSetReps ?? 5} defaultAddedWeightLbs={tracker.padAddedWeightLbs(dayKey(now, timeZone))} now={now} timeZone={timeZone} onClose={closeSheet} onLogged={onLogged} />
+        <EntrySheet
+          tracker={tracker}
+          day={sheet.day}
+          context={sheet.context}
+          defaultReps={usualAmount(entries, sheet.context ?? { exerciseId: PULL_UP, variationIds: [] }, now, timeZone) ?? (tracker.exercise(sheet.context?.exerciseId ?? PULL_UP)?.measure === 'time' ? 30 : 5)}
+          defaultAddedWeightLbs={tracker.padAddedWeightLbs(dayKey(now, timeZone), sheet.context?.exerciseId)}
+          now={now}
+          timeZone={timeZone}
+          onClose={closeSheet}
+          onLogged={onLogged}
+        />
       ) : null}
       {sheet?.kind === 'edit' ? (
         <EntrySheet tracker={tracker} entry={tracker.getEntry(sheet.entry.id) ?? sheet.entry} defaultReps={sheet.entry.reps ?? 5} now={now} timeZone={timeZone} onClose={closeSheet} onDeleted={onDeleted} />
@@ -219,7 +233,17 @@ export function App({ tracker }: { tracker: Tracker }) {
           }}
         />
       ) : null}
-      {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} now={now} timeZone={timeZone} onClose={closeSheet} /> : null}
+      {sheet?.kind === 'describe' ? (
+        <DescribeSheet
+          tracker={tracker}
+          onClose={closeSheet}
+          onLoggedAll={(setCount) => {
+            setSheet(null);
+            showToast(`Logged ${setCount} ${setCount === 1 ? 'set' : 'sets'}`);
+          }}
+        />
+      ) : null}
+      {sheet?.kind === 'weight' ? <PadWeightSheet tracker={tracker} exerciseId={sheet.exerciseId} now={now} timeZone={timeZone} onClose={closeSheet} /> : null}
     </div>
   );
 }
