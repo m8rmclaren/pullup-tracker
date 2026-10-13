@@ -9,8 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    # Set to your Apple Developer Team ID for device builds; the Simulator signs locally without one.
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: CP4PXEQ2P5
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"

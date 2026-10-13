@@ -39,6 +39,8 @@ struct TodayView: View {
     @State private var timerStartedAt: Date?
     @State private var lastTapAt = ContinuousClock.now - .seconds(10)
     @State private var logCount = 0
+    /// The repeated session just ran out: said on the toast, so it doesn't end silently.
+    @State private var isSessionDone = false
 
     private var context: SetContext {
         queue.map { $0.current.context } ?? model.padContext
@@ -275,22 +277,36 @@ struct TodayView: View {
     @ViewBuilder
     private var undoToast: some View {
         if let logged = model.justLogged {
-            HStack {
-                Text("Logged \(model.describe(logged))").lineLimit(1)
+            toast {
+                Text("\(isSessionDone ? "Session done · " : "")Logged \(model.describe(logged))").lineLimit(1)
                 Spacer()
                 Button("Undo") { model.undoLastLog() }.fontWeight(.semibold)
             }
+            .task(id: logged.id) {
+                // A cancelled sleep means this toast was replaced, not that it timed out.
+                guard (try? await Task.sleep(for: .seconds(5))) != nil else { return }
+                if model.justLogged?.id == logged.id {
+                    model.dismissUndo()
+                    isSessionDone = false
+                }
+            }
+        } else if isSessionDone {
+            toast { Text("Session done") }
+                .task {
+                    guard (try? await Task.sleep(for: .seconds(3))) != nil else { return }
+                    isSessionDone = false
+                }
+        }
+    }
+
+    private func toast(@ViewBuilder content: () -> some View) -> some View {
+        HStack { content() }
             .padding(.horizontal, 16)
-            .frame(minHeight: 48)
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             .background(.thickMaterial, in: .capsule)
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .transition(.move(edge: .top).combined(with: .opacity))
-            .task(id: logged.id) {
-                try? await Task.sleep(for: .seconds(5))
-                if model.justLogged?.id == logged.id { model.dismissUndo() }
-            }
-        }
     }
 
     // MARK: - Actions
@@ -318,6 +334,7 @@ struct TodayView: View {
     private func logSet() {
         guard !isTapGuarded() else { return }
         logCount += 1
+        isSessionDone = false
         var template = SetTemplate(context: context, addedWeightLbs: addedWeightLbs > 0 ? addedWeightLbs : nil)
         if isTimed { template.holdSeconds = amount } else { template.reps = amount }
         model.log(template)
@@ -327,6 +344,7 @@ struct TodayView: View {
     private func repeatLastSet(_ previous: Entry) {
         guard !isTapGuarded() else { return }
         logCount += 1
+        isSessionDone = false
         model.log(previous.template)
     }
 
@@ -337,6 +355,7 @@ struct TodayView: View {
             self.queue = queue
         } else {
             self.queue = nil
+            isSessionDone = true
         }
         chosenAmount = nil
     }

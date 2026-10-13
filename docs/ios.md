@@ -157,9 +157,10 @@ build with `xcodebuild -project Pullups.xcodeproj -scheme Pullups -destination
 'platform=iOS Simulator,name=iPhone 16'`. Debug talks to `npm run dev` on
 `http://localhost:5173`. Override it with `API_BASE_URL=http://localhost:<port>` on the
 `xcodebuild` line when the dev server lands on another port. Sign the Simulator in with the
-device link the dev server prints. Passkeys need the real domain's AASA, so they work only
-on a device build with a Team ID. The bundle id is `com.haydenroszell.pullups`, and the App
-Group is `group.com.haydenroszell.pullups`.
+device link the dev server prints. Passkeys need the real domain's AASA listing the app
+(`APPLE_APP_ID` = `CP4PXEQ2P5.com.haydenroszell.pullups` in the repo's Actions variables), so
+they work only once that is deployed. The Team ID is `CP4PXEQ2P5`, the bundle id
+`com.haydenroszell.pullups`, and the App Group `group.com.haydenroszell.pullups`.
 
 **Release.**
 - Xcode Cloud builds and uploads to TestFlight on pushes to `main` that touch `ios/`.

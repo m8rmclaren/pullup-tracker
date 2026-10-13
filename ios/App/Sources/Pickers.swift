@@ -14,12 +14,20 @@ struct ExercisePickerView: View {
         query.isEmpty ? model.allExercises : searchNames(query, in: model.allExercises)
     }
 
+    /// Typing an exercise's own name means that exercise, not a new one.
+    private var hasExactMatch: Bool {
+        let key = nameKey(query)
+        return !key.isEmpty && model.allExercises.contains { nameKey($0.name) == key }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Button { isCreating = true } label: {
-                        Label(query.isEmpty ? "New exercise" : "New exercise “\(query)”", systemImage: "plus")
+                if !hasExactMatch {
+                    Section {
+                        Button { isCreating = true } label: {
+                            Label(query.isEmpty ? "New exercise" : "New exercise “\(query)”", systemImage: "plus")
+                        }
                     }
                 }
                 Section {
