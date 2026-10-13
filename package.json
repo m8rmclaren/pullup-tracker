@@ -7,7 +7,8 @@
     "dev": "node scripts/dev.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "eval:compose": "node scripts/eval-compose.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

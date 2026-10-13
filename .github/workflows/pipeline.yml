@@ -90,6 +90,7 @@ jobs:
           -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}"
           -var "signup_open=${{ vars.SIGNUP_OPEN || 'false' }}"
           -var "sweep_enabled=${{ vars.SWEEP_ENABLED || 'false' }}"
+          -var "compose_enabled=${{ vars.COMPOSE_ENABLED || 'false' }}"
       - run: scripts/publish-site.sh
       - name: summary
         run: |

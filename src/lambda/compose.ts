@@ -39,7 +39,8 @@ const SPEND_ATTEMPTS = 3;
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function localTimeLabel(nowMs: number, timeZone: string): string {
+/** "Thursday 2026-10-08 18:05": the local time the model counts minutesAgo back from. */
+export function localTimeLabel(nowMs: number, timeZone: string): string {
   const day = dayKey(nowMs, timeZone);
   const clock = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(nowMs);
   return `${WEEKDAYS[new Date(`${day}T12:00:00Z`).getUTCDay()]} ${day} ${clock}`;

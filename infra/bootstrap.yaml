@@ -87,6 +87,12 @@ Resources:
           - Effect: Allow
             Action: [logs:CreateLogStream, logs:PutLogEvents]
             Resource: !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/${Prefix}-*'
+          # Describe (/api/compose) calls Claude through Claude in Amazon Bedrock. The role only
+          # gets it when compose_enabled is set in infra/.
+          - Sid: ComposeModel
+            Effect: Allow
+            Action: [bedrock-mantle:CreateInference]
+            Resource: '*'
 
   DeployRole:
     Type: AWS::IAM::Role

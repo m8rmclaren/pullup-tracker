@@ -44,3 +44,21 @@ variable "sweep_enabled" {
   type        = bool
   default     = false
 }
+
+variable "compose_enabled" {
+  description = "Turn on Describe (/api/compose), which calls Claude on Amazon Bedrock. Needs the boundary's ComposeModel statement from infra/bootstrap.yaml and access to the model in the Bedrock console first."
+  type        = bool
+  default     = false
+}
+
+variable "compose_model_id" {
+  description = "The Claude in Amazon Bedrock model Describe calls."
+  type        = string
+  default     = "anthropic.claude-haiku-5-5"
+}
+
+variable "compose_monthly_ceiling_usd" {
+  description = "Describe rests for the rest of the month once its estimated spend passes this. The pad always works."
+  type        = number
+  default     = 5
+}
