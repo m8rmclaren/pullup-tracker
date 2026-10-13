@@ -56,10 +56,16 @@ differs from `src/shared/catalog.json`.
   an outbox entry cleared only if the acknowledged version is still the latest, and the
   cursor reset when the account changes. It depends on `ReplicaStore` (entries,
   definitions, outbox, cursor, account, settings, each mutation transactional) and
-  `Transport`. Tests use in-memory implementations, as `test/tracker.test.ts` does.
+  `SyncTransport`. Tests use `MemoryReplicaStore` and a fake server, as
+  `test/tracker.test.ts` does.
+
+  Two differences from `tracker.ts`. The engine keeps no copy of the replica: every read and
+  write is a store transaction, because another process may have written since. And a
+  response that arrives after the token changed is dropped whole, outbox kept, rather than
+  merged into the new account's replica.
 - **`APIClient`** builds requests, including the `x-amz-content-sha256` payload hash
-  CloudFront's origin access control needs, using `swift-crypto`. That is the package's
-  only dependency.
+  CloudFront's origin access control needs. It hashes with CryptoKit on Apple platforms and
+  `swift-crypto` on Linux, the package's only dependency.
 
 ### Storage across processes
 

@@ -11,3 +11,4 @@ infra/.terraform.lock.hcl
 # Swift
 .build/
 .swiftpm/
+.DS_Store

@@ -7,8 +7,16 @@ let package = Package(
     products: [
         .library(name: "TrackerCore", targets: ["TrackerCore"]),
     ],
+    dependencies: [
+        // SHA-256 on Linux, where CryptoKit doesn't exist. Apple platforms use CryptoKit.
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
+    ],
     targets: [
-        .target(name: "TrackerCore", resources: [.copy("Resources/catalog.json")]),
+        .target(
+            name: "TrackerCore",
+            dependencies: [.product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))],
+            resources: [.copy("Resources/catalog.json")]
+        ),
         .testTarget(name: "TrackerCoreTests", dependencies: ["TrackerCore"]),
     ]
 )
