@@ -1,0 +1,33 @@
+{
+  "items": [
+    { "id": "pull-up", "name": "Pull-up" },
+    { "id": "chin-up", "name": "Chin-up" },
+    { "id": "push-up", "name": "Push-up" },
+    { "id": "pike-push-up", "name": "Pike push-up" },
+    { "id": "front-lever", "name": "Front lever" },
+    { "id": "back-lever", "name": "Back lever" },
+    { "id": "l-sit", "name": "L-sit" },
+    { "id": "hanging-leg-raise", "name": "Hanging leg raise" },
+    { "id": "x-k3p9aaaaaaaaaaaa", "name": "Red Rocks stairs" },
+    { "id": "x-cafeaaaaaaaaaaaa", "name": "Café dips" }
+  ],
+  "matches": [
+    { "name": "exact name", "query": "Pull-up", "expected": "pull-up" },
+    { "name": "plural and spacing", "query": "pull ups", "expected": "pull-up" },
+    { "name": "run together", "query": "PULLUPS", "expected": "pull-up" },
+    { "name": "every word of the query in one name", "query": "red rocks", "expected": "x-k3p9aaaaaaaaaaaa" },
+    { "name": "accents fold", "query": "cafe dips", "expected": "x-cafeaaaaaaaaaaaa" },
+    { "name": "a typo within the allowance", "query": "hangin leg raise", "expected": "hanging-leg-raise" },
+    { "name": "words shared by two names are ambiguous", "query": "lever", "expected": null },
+    { "name": "push up is exact, not ambiguous with pike push-up", "query": "push up", "expected": "push-up" },
+    { "name": "short keys allow no typos", "query": "lsat", "expected": null },
+    { "name": "something new", "query": "Muscle-up on rings", "expected": null },
+    { "name": "punctuation only", "query": "!!", "expected": null }
+  ],
+  "searches": [
+    { "name": "prefix before words before contains", "query": "push", "expected": ["push-up", "pike-push-up"] },
+    { "name": "word prefixes", "query": "red sta", "expected": ["x-k3p9aaaaaaaaaaaa"] },
+    { "name": "both levers", "query": "lever", "expected": ["back-lever", "front-lever"] },
+    { "name": "empty", "query": "  ", "expected": [] }
+  ]
+}

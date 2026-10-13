@@ -36,6 +36,10 @@ export function allBuiltInExercises(): BuiltInExercise[] {
   return [...builtInExercises.values()];
 }
 
+export function allBuiltInVariations(): BuiltInVariation[] {
+  return [...builtInVariations.values()];
+}
+
 // Created ids are random lowercase base32, and no built-in slug starts with "x-" or "v-", so
 // the prefix alone says which kind an id is.
 export const CREATED_EXERCISE_ID = /^x-[a-z2-7]{16}$/;

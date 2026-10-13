@@ -22,6 +22,7 @@ validation or stats behavior.
 | `merge.json` | `winners`: two versions of one entry and which wins, checked in both argument orders. `replicas`: lists merged in every order (and twice) must equal `merged`. `normalize`: an entry and its normalized form. |
 | `validation.json` | `entries`: a value and whether it is a valid entry. |
 | `boards.json` | `cases`: a board spec, the members (zone, goal, stored day totals as the server returns them) and a `now`; the expected rows in order (`id`, `name`, `value`, `rank`), and for a fixed window the `groupTotal`. Ties, missing days, goal-less members, other zones, pre-v2 day totals, holds and challenge windows. |
+| `compose/names.json` | `items` (id + name), `matches`: a typed or spoken name and the one item it means, or `null` when it means none or is ambiguous; `searches`: a query and the picker's results in order. |
 | `stats.json` | `cases`: an entry history, zone and goal, and `checks` at given instants: partial `stats`, per-day `dayTotals`, `usualReps`, `heaviestSet`. A case may also pin the server's stored `dayTotals`. |
 
 ## The v1 golden history
