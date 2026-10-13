@@ -29,4 +29,6 @@ out = sys.argv[1]
 draw(192, 0.08).save(f"{out}/icon-192.png")
 draw(512, 0.08).save(f"{out}/icon-512.png")
 draw(512, 0.18).save(f"{out}/maskable-512.png")  # content inside the maskable safe zone
+if len(sys.argv) > 2:
+    draw(1024, 0.08).save(f"{sys.argv[2]}/icon-1024.png")  # the iOS app icon; iOS rounds the corners itself
 draw(180, 0.08).save(f"{out}/apple-touch-icon.png")

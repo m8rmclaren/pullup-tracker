@@ -7,3 +7,11 @@ infra/terraform.tfvars
 *.zip
 infra/.build/
 infra/.terraform.lock.hcl
+
+# Swift
+.build/
+.swiftpm/
+.DS_Store
+ios/*.xcodeproj/
+ios/App/Info.plist
+ios/App/Tracker.entitlements

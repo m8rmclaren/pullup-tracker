@@ -1,7 +1,7 @@
 # Shared fixtures
 
 Behavior that every client must agree on, as data. The TypeScript suites run every case
-here, and the Swift `PullupCore` suite will run the same files (see `docs/v2-design.md`,
+here, and the Swift `TrackerCore` suite (`ios/TrackerCore`) runs the same files (see `docs/v2-design.md`,
 Shared fixtures). Add a case here, not inline in a test, when it pins merge, day-key,
 validation or stats behavior.
 

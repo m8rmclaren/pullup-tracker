@@ -1,6 +1,6 @@
 # Pull-up Tracker v2: product
 
-Status: **draft**, revised 2026-10-12. Screens and interactions are deliberately left
+Status: **draft**, revised 2026-10-13. Screens and interactions are deliberately left
 loose. They are cheaper to find by using a build than by specifying them here.
 
 The v2 design is three docs, split by how often they change:
@@ -41,7 +41,7 @@ in, and it shows stats.
   client release.
 
 The AWS backend stays and gets additive changes. The iOS client is SwiftUI over a plain
-Swift package (`PullupCore`) that builds and tests on Linux. Android users get the PWA,
+Swift package (`TrackerCore`) that builds and tests on Linux. Android users get the PWA,
 which keeps developing as a full client instead of freezing.
 
 ## Goals
@@ -199,6 +199,10 @@ The PWA is the Android and web client, so it no longer freezes. It keeps the sam
 pattern and the same features as iOS, minus what needs the platform: widgets, Live
 Activities and the Watch. Its composer is the same `/api/compose` as iOS.
 
+From M3, **iOS leads the design.** Screens and interactions are worked out on iOS first,
+where the app is mostly used, then carried back to the PWA. A design change on iOS isn't
+done until the PWA follow-up is written down, so Android doesn't quietly fall behind.
+
 Keeping two clients current is the cost of Android without a native app. The shared TS
 code (`model`, `time`, `stats`, the resolver) is most of the logic, so the PWA's extra work
 is mostly UI.
@@ -252,8 +256,14 @@ challenge links get opened, do opens become accounts, and do those accounts make
 their own? Tune link kinds and boards here, where a change is a deploy. The final domain
 must be in place before links go to anyone.
 
+*Decided 2026-10-13:* M3 starts without waiting on the checkpoint. iOS is the main
+experience, so it gets built whether or not the loop takes; the counters still get read
+once links go out. M3 builds on `pullups.haydenroszell.com` while the operator is the only
+user. The domain moves before the first TestFlight invite or link goes to anyone else,
+since the app's associated domains and the passkey RP ID are bound to it.
+
 **M3: iOS skeleton.**
-- `PullupCore` with every fixture passing on Linux. XcodeGen project, GRDB store.
+- `TrackerCore` with every fixture passing on Linux. XcodeGen project, GRDB store.
 - Passkey sign-up and sign-in, link redemption.
 - Today screen with the full input pattern, Repeat, undo, edit and delete. Basic stats.
 - macOS CI and Xcode Cloud.

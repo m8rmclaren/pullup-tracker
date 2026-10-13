@@ -628,7 +628,7 @@ model, so the on-device model can slot in later behind the same draft UI:
 ```
 
 **The model names things. It doesn't pick ids.** Resolving "push ups" to `push-up`, or
-"red rocks" to your friend's `x-k3p9…`, is deterministic code in `PullupCore` and
+"red rocks" to your friend's `x-k3p9…`, is deterministic code in `TrackerCore` and
 `src/shared/`: normalized-name match against the known list, then an edit-distance
 threshold, then "new". That keeps both models' jobs small, keeps the ids out of the model's
 reach, and makes resolution testable with fixtures. `repeat` expands into individual sets,
