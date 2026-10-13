@@ -1586,3 +1586,16 @@ input:focus-visible {
 .seg--wide button {
   flex: 1;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.trends__picker {
+  margin: 0 0 12px;
+}

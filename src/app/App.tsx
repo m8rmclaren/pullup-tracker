@@ -112,7 +112,7 @@ export function App({ tracker }: { tracker: Tracker }) {
             onToast={(text) => showToast(text)}
           />
         ) : tab === 'trends' ? (
-          <Trends entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
+          <Trends tracker={tracker} entries={entries} unitOf={unitLookup(tracker)} stats={stats} now={now} timeZone={timeZone} goal={goal} onOpenDay={(day) => setSheet({ kind: 'day', day })} />
         ) : (
           <FriendsTab
             key={friendsVersion}

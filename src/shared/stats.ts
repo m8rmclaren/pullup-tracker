@@ -16,6 +16,9 @@ export function isRingEntry(entry: Entry, unitOf: UnitLookup = builtInUnit): ent
 
 const isLivePullUp = (entry: Entry): entry is CountedEntry => !entry.deleted && entry.reps !== undefined && exerciseIdOf(entry) === PULL_UP;
 
+/** A set's amount in its exercise's own unit: the count, or seconds for a hold. */
+export const amountOf = (entry: Entry): number => entry.reps ?? entry.holdSeconds ?? 0;
+
 export interface DayTotal {
   day: string;
   reps: number;
@@ -36,6 +39,20 @@ export function dailyTotals(entries: Iterable<Entry>, timeZone: string, unitOf: 
     const day = dayKey(entry.doneAt, timeZone);
     const dayTotal = totals.get(day) ?? { day, reps: 0, sets: 0 };
     dayTotal.reps += entry.reps;
+    dayTotal.sets += 1;
+    totals.set(day, dayTotal);
+  }
+  return totals;
+}
+
+/** One exercise's amount and sets per day, in its own unit. `reps` holds the day's count, or its seconds for a timed exercise. */
+export function exerciseDailyTotals(entries: Iterable<Entry>, timeZone: string, exerciseId: string): Map<string, DayTotal> {
+  const totals = new Map<string, DayTotal>();
+  for (const entry of entries) {
+    if (entry.deleted || exerciseIdOf(entry) !== exerciseId) continue;
+    const day = dayKey(entry.doneAt, timeZone);
+    const dayTotal = totals.get(day) ?? { day, reps: 0, sets: 0 };
+    dayTotal.reps += amountOf(entry);
     dayTotal.sets += 1;
     totals.set(day, dayTotal);
   }
@@ -86,7 +103,11 @@ export interface Stats {
 
 /** Ring stats: only counted sets in rep-unit exercises (see isRingEntry). */
 export function computeStats(entries: Iterable<Entry>, nowMs: number, goalReps: number, timeZone: string, unitOf: UnitLookup = builtInUnit): Stats {
-  const totals = dailyTotals(entries, timeZone, unitOf);
+  return statsFromTotals(dailyTotals(entries, timeZone, unitOf), nowMs, goalReps, timeZone);
+}
+
+/** The same stats over any day totals: the ring's, or one exercise's (exerciseDailyTotals), where `reps` is that exercise's amount. */
+export function statsFromTotals(totals: Map<string, DayTotal>, nowMs: number, goalReps: number, timeZone: string): Stats {
   const todayKey = dayKey(nowMs, timeZone);
   const today = totals.get(todayKey) ?? { day: todayKey, reps: 0, sets: 0 };
 
@@ -181,23 +202,39 @@ export function usualReps(entries: Iterable<Entry>, nowMs: number, timeZone: str
 
 export interface HeaviestSet {
   addedWeightLbs: number;
+  /** The set's amount: its count, or seconds for a hold. */
   reps: number;
   day: string;
 }
 
-/** Most added weight in one pull-up set; ties go to more reps, then the more recent day. Null if every set was bodyweight. */
-export function heaviestSet(entries: Iterable<Entry>, nowMs: number, timeZone: string): HeaviestSet | null {
+/** Most added weight in one set of an exercise; ties go to the bigger amount, then the more recent day. Null if every set was bodyweight. */
+export function heaviestSet(entries: Iterable<Entry>, nowMs: number, timeZone: string, exerciseId = PULL_UP): HeaviestSet | null {
   const todayKey = dayKey(nowMs, timeZone);
   let heaviest: HeaviestSet | null = null;
   for (const entry of entries) {
-    if (!isLivePullUp(entry) || !entry.addedWeightLbs) continue;
+    if (entry.deleted || exerciseIdOf(entry) !== exerciseId || !entry.addedWeightLbs) continue;
     const day = dayKey(entry.doneAt, timeZone);
     if (day > todayKey) continue;
-    if (!heaviest || entry.addedWeightLbs > heaviest.addedWeightLbs || (entry.addedWeightLbs === heaviest.addedWeightLbs && (entry.reps > heaviest.reps || (entry.reps === heaviest.reps && day > heaviest.day)))) {
-      heaviest = { addedWeightLbs: entry.addedWeightLbs, reps: entry.reps, day };
+    const amount = amountOf(entry);
+    if (!heaviest || entry.addedWeightLbs > heaviest.addedWeightLbs || (entry.addedWeightLbs === heaviest.addedWeightLbs && (amount > heaviest.reps || (amount === heaviest.reps && day > heaviest.day)))) {
+      heaviest = { addedWeightLbs: entry.addedWeightLbs, reps: amount, day };
     }
   }
   return heaviest;
+}
+
+/** The biggest single set of an exercise up to today, in its own unit; ties go to the more recent day. */
+export function bestSet(entries: Iterable<Entry>, nowMs: number, timeZone: string, exerciseId: string): { amount: number; day: string } | null {
+  const todayKey = dayKey(nowMs, timeZone);
+  let best: { amount: number; day: string } | null = null;
+  for (const entry of entries) {
+    if (entry.deleted || exerciseIdOf(entry) !== exerciseId) continue;
+    const day = dayKey(entry.doneAt, timeZone);
+    if (day > todayKey) continue;
+    const amount = amountOf(entry);
+    if (!best || amount > best.amount || (amount === best.amount && day > best.day)) best = { amount, day };
+  }
+  return best;
 }
 
 /** One exercise's share of a day, in that exercise's own unit. Counted exercises carry reps, timed ones holdSeconds. */

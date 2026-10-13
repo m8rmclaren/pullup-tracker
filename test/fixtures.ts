@@ -46,5 +46,7 @@ export interface StatsFixtureCase {
     dayTotals?: Record<string, { reps: number; sets: number }>;
     usualReps?: number | null;
     heaviestSet?: Record<string, unknown> | null;
+    /** Per exercise, in its own unit: exerciseDailyTotals, statsFromTotals over them, bestSet and heaviestSet. */
+    exercises?: Record<string, { dayTotals?: Record<string, { reps: number; sets: number }>; stats?: Record<string, unknown>; bestSet?: { amount: number; day: string } | null; heaviestSet?: Record<string, unknown> | null }>;
   }[];
 }

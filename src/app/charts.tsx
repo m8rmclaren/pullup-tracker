@@ -25,17 +25,22 @@ export function Ring({ value, goal }: { value: number; goal: number }) {
 interface BarChartProps {
   days: DayTotal[];
   trailingAverages: (number | null)[];
-  goal: number;
+  /** Null for a single exercise, which has no goal. */
+  goal: number | null;
   today: string;
+  /** A day's amount in words; reps by default. */
+  formatAmount?: (amount: number) => string;
 }
 
+const formatReps = (reps: number) => `${reps} reps`;
+
 /** Daily totals as bars, with the goal as a dashed rule and the 7-day trailing mean as a line. */
-export function BarChart({ days, trailingAverages, goal, today }: BarChartProps) {
+export function BarChart({ days, trailingAverages, goal, today, formatAmount = formatReps }: BarChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const width = 340;
   const height = 168;
   const padding = { left: 26, right: 6, top: 10, bottom: 20 };
-  const maxReps = Math.max(goal * 1.15, ...days.map((dayTotal) => dayTotal.reps), 10);
+  const maxReps = Math.max((goal ?? 0) * 1.15, ...days.map((dayTotal) => dayTotal.reps), 10);
   const yAxisMax = Math.ceil(maxReps / 10) * 10;
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
@@ -58,15 +63,15 @@ export function BarChart({ days, trailingAverages, goal, today }: BarChartProps)
       <div class="chart__readout" aria-live="polite">
         <span class="chart__readout-day">{selectedDay.day === today ? 'Today' : formatDay(selectedDay.day, { weekday: true })}</span>
         <span class="chart__readout-val">
-          <b>{selectedDay.reps}</b> reps · {selectedDay.sets} {selectedDay.sets === 1 ? 'set' : 'sets'}
-          {selectedAverage !== null && selectedAverage !== undefined ? <span class="muted"> · 7d avg {selectedAverage.toFixed(1)}</span> : null}
+          <b>{formatAmount(selectedDay.reps)}</b> · {selectedDay.sets} {selectedDay.sets === 1 ? 'set' : 'sets'}
+          {selectedAverage !== null && selectedAverage !== undefined ? <span class="muted"> · 7d avg {selectedAverage.toFixed(selectedAverage >= 100 ? 0 : 1)}</span> : null}
         </span>
       </div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         class="chart__svg"
         role="img"
-        aria-label={`Daily reps for the last ${days.length} days`}
+        aria-label={`Daily totals for the last ${days.length} days`}
         onPointerLeave={() => setHoveredIndex(null)}
       >
         {ticks.map((tick) => (
@@ -81,12 +86,12 @@ export function BarChart({ days, trailingAverages, goal, today }: BarChartProps)
           dayTotal.reps > 0 ? (
             <path
               key={dayTotal.day}
-              class={`chart__bar${i === selectedIndex ? ' is-sel' : ''}${dayTotal.reps >= goal ? ' is-hit' : ''}`}
+              class={`chart__bar${i === selectedIndex ? ' is-sel' : ''}${goal !== null && dayTotal.reps >= goal ? ' is-hit' : ''}`}
               d={roundedTopBar(padding.left + slotWidth * i + barGap / 2, yForReps(dayTotal.reps), barWidth, yForReps(0) - yForReps(dayTotal.reps), Math.min(4, barWidth / 2))}
             />
           ) : null,
         )}
-        <line class="chart__goal" x1={padding.left} x2={width - padding.right} y1={yForReps(goal)} y2={yForReps(goal)} />
+        {goal !== null ? <line class="chart__goal" x1={padding.left} x2={width - padding.right} y1={yForReps(goal)} y2={yForReps(goal)} /> : null}
         {averagePoints.length > 1 ? <polyline class="chart__avg" points={averagePoints.join(' ')} /> : null}
         {days.map((dayTotal, i) =>
           (days.length - 1 - i) % labelEveryDays === 0 ? (
@@ -115,9 +120,11 @@ export function BarChart({ days, trailingAverages, goal, today }: BarChartProps)
         <span class="legend__item">
           <i class="legend__swatch legend__swatch--avg" /> 7-day avg
         </span>
-        <span class="legend__item">
-          <i class="legend__swatch legend__swatch--goal" /> Goal {goal}
-        </span>
+        {goal !== null ? (
+          <span class="legend__item">
+            <i class="legend__swatch legend__swatch--goal" /> Goal {goal}
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -137,7 +144,8 @@ export function heatLevel(reps: number, goal: number): 0 | 1 | 2 | 3 | 4 {
   return 1;
 }
 
-export function Heatmap({ dayTotals, today, goal, weeks = 26 }: { dayTotals: Map<string, DayTotal>; today: string; goal: number; weeks?: number }) {
+/** `goal` sets the top of the scale: the ring goal, or for one exercise its biggest day. */
+export function Heatmap({ dayTotals, today, goal, weeks = 26, formatAmount = formatReps }: { dayTotals: Map<string, DayTotal>; today: string; goal: number; weeks?: number; formatAmount?: (amount: number) => string }) {
   const firstDay = addDays(startOfWeek(today), -7 * (weeks - 1));
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const weekColumns: string[][] = [];
@@ -160,7 +168,7 @@ export function Heatmap({ dayTotals, today, goal, weeks = 26 }: { dayTotals: Map
           <span key={i}>{monthLabel}</span>
         ))}
       </div>
-      <div class="heat__grid" style={{ gridTemplateColumns: `repeat(${weeks}, 1fr)` }} role="img" aria-label="Daily reps over the last six months">
+      <div class="heat__grid" style={{ gridTemplateColumns: `repeat(${weeks}, 1fr)` }} role="img" aria-label="Daily totals over the last six months">
         {weekColumns.map((weekDays) =>
           weekDays.map((day) => {
             const dayTotal = dayTotals.get(day);
@@ -171,7 +179,7 @@ export function Heatmap({ dayTotals, today, goal, weeks = 26 }: { dayTotals: Map
                 type="button"
                 class={`heat__cell lvl${isFuture ? 'x' : heatLevel(dayTotal?.reps ?? 0, goal)}${selectedDay === day ? ' is-sel' : ''}${day === today ? ' is-today' : ''}`}
                 disabled={isFuture}
-                aria-label={`${formatDay(day, { weekday: true })}: ${dayTotal?.reps ?? 0} reps`}
+                aria-label={`${formatDay(day, { weekday: true })}: ${formatAmount(dayTotal?.reps ?? 0)}`}
                 onClick={() => setSelectedDay(selectedDay === day ? null : day)}
               />
             );
@@ -181,7 +189,7 @@ export function Heatmap({ dayTotals, today, goal, weeks = 26 }: { dayTotals: Map
       <div class="heat__foot">
         <span class="muted small">
           {selectedTotal
-            ? `${formatDay(selectedTotal.day, { weekday: true })} · ${selectedTotal.reps} reps · ${selectedTotal.sets} ${selectedTotal.sets === 1 ? 'set' : 'sets'}`
+            ? `${formatDay(selectedTotal.day, { weekday: true })} · ${formatAmount(selectedTotal.reps)} · ${selectedTotal.sets} ${selectedTotal.sets === 1 ? 'set' : 'sets'}`
             : 'Tap a day for details'}
         </span>
         <span class="heat__scale" aria-hidden="true">
@@ -189,7 +197,7 @@ export function Heatmap({ dayTotals, today, goal, weeks = 26 }: { dayTotals: Map
           {[1, 2, 3, 4].map((level) => (
             <i key={level} class={`heat__cell lvl${level}`} />
           ))}
-          <span class="small muted">{goal}+</span>
+          <span class="small muted">{formatAmount(goal)}+</span>
         </span>
       </div>
     </div>

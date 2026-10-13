@@ -685,6 +685,175 @@
    ]
   },
   {
+   "name": "per-exercise stats read in the exercise's own unit",
+   "timeZone": "Europe/London",
+   "goalReps": 35,
+   "definitions": [
+    {
+     "id": "x-redrocksstairs22",
+     "name": "Red Rocks stairs",
+     "measure": "count",
+     "unit": "lap",
+     "createdAt": 1,
+     "updatedAt": 1
+    },
+    {
+     "id": "x-wallsitaaaaaaaaa",
+     "name": "Wall sit",
+     "measure": "time",
+     "createdAt": 1,
+     "updatedAt": 1
+    }
+   ],
+   "entries": [
+    {
+     "id": "s1",
+     "doneAt": "2026-10-05T07:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 3
+    },
+    {
+     "id": "s2",
+     "doneAt": "2026-10-06T07:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 2
+    },
+    {
+     "id": "s3",
+     "doneAt": "2026-10-06T08:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 4
+    },
+    {
+     "id": "s4",
+     "doneAt": "2026-10-08T07:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 1
+    },
+    {
+     "id": "s5",
+     "doneAt": "2026-10-08T07:30:00+01:00",
+     "updatedAt": 2,
+     "exerciseId": "x-redrocksstairs22",
+     "reps": 1,
+     "deleted": true
+    },
+    {
+     "id": "w1",
+     "doneAt": "2026-10-06T09:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-wallsitaaaaaaaaa",
+     "holdSeconds": 60,
+     "addedWeightLbs": 10
+    },
+    {
+     "id": "w2",
+     "doneAt": "2026-10-07T09:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-wallsitaaaaaaaaa",
+     "holdSeconds": 90
+    },
+    {
+     "id": "w3",
+     "doneAt": "2026-10-08T09:00:00+01:00",
+     "updatedAt": 1,
+     "exerciseId": "x-wallsitaaaaaaaaa",
+     "holdSeconds": 45,
+     "addedWeightLbs": 10
+    },
+    {
+     "id": "p1",
+     "doneAt": "2026-10-08T10:00:00+01:00",
+     "updatedAt": 1,
+     "reps": 5
+    }
+   ],
+   "checks": [
+    {
+     "now": "2026-10-08T12:00:00+01:00",
+     "exercises": {
+      "x-redrocksstairs22": {
+       "dayTotals": {
+        "2026-10-05": {
+         "reps": 3,
+         "sets": 1
+        },
+        "2026-10-06": {
+         "reps": 6,
+         "sets": 2
+        },
+        "2026-10-08": {
+         "reps": 1,
+         "sets": 1
+        }
+       },
+       "stats": {
+        "today": {
+         "day": "2026-10-08",
+         "reps": 1,
+         "sets": 1
+        },
+        "streak": 1,
+        "bestDay": {
+         "day": "2026-10-06",
+         "reps": 6,
+         "sets": 2
+        },
+        "weekToDate": 10,
+        "lifetimeReps": 10,
+        "lifetimeSets": 4,
+        "activeDays": 3
+       },
+       "bestSet": {
+        "amount": 4,
+        "day": "2026-10-06"
+       },
+       "heaviestSet": null
+      },
+      "x-wallsitaaaaaaaaa": {
+       "dayTotals": {
+        "2026-10-06": {
+         "reps": 60,
+         "sets": 1
+        },
+        "2026-10-07": {
+         "reps": 90,
+         "sets": 1
+        },
+        "2026-10-08": {
+         "reps": 45,
+         "sets": 1
+        }
+       },
+       "stats": {
+        "streak": 3,
+        "bestDay": {
+         "day": "2026-10-07",
+         "reps": 90,
+         "sets": 1
+        },
+        "lifetimeReps": 195,
+        "activeDays": 3
+       },
+       "bestSet": {
+        "amount": 90,
+        "day": "2026-10-07"
+       },
+       "heaviestSet": {
+        "addedWeightLbs": 10,
+        "reps": 60,
+        "day": "2026-10-06"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "v1 golden history",
    "timeZone": "America/Denver",
    "goalReps": 35,
