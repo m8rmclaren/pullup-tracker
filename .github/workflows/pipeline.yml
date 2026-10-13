@@ -51,6 +51,15 @@ jobs:
           path: dist/
           retention-days: 7
 
+  trackercore:
+    # The Swift port of src/shared, against the same fixtures as the TypeScript suite.
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v5
+      - run: swift test
+        working-directory: ios/TrackerCore
+
   deploy:
     needs: check
     # Only main can assume the AWS role (the OIDC trust is pinned to refs/heads/main), and

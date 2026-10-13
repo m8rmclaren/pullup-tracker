@@ -43,7 +43,7 @@ Everything around the composer call (the resolver, draft expansion, board evalua
 ### TrackerCore
 
 Behavior is pinned by the shared fixtures in [v2-design.md](v2-design.md#shared-fixtures).
-`catalog.json` reaches the Swift package as a copied resource. A CI step fails if the copy
+`catalog.json` reaches the Swift package as a copied resource. A test fails if the copy
 differs from `src/shared/catalog.json`.
 
 - **`Entry`, `Definition`, `pickWinner`, `normalize`, `isValid`**: ports of `model.ts`.

@@ -12,6 +12,7 @@ relevant section there before changing any of them.
 - `infra/` — Terraform for the app, plus `bootstrap.yaml` (CloudFormation for OIDC trust, deploy role, state bucket)
 - `scripts/` — build, dev, deploy, invite tooling
 - `test/` — vitest suites
+- `ios/TrackerCore/` — the Swift package the iOS app's logic lives in: ports of `src/shared/`, tested against `test/fixtures/`
 - `docs/product.md` — v2 product shape, growth loop, milestones and open questions
 - `docs/v2-design.md` — v2 data model, API, auth and composer; read it before changing any of them
 - `docs/ios.md` — native iOS app architecture, build and release; read it before working on `ios/`
@@ -25,6 +26,7 @@ relevant section there before changing any of them.
 | `npm run typecheck` | `tsc` over the app and the service worker config |
 | `npm test` | vitest |
 | `npm run check` | typecheck + test — run before calling a change done |
+| `swift test` (in `ios/TrackerCore`) | the Swift port against the shared fixtures — run after any change to `src/shared/` or `test/fixtures/` |
 | `npm run eval:compose` | run `test/fixtures/compose/descriptions.json` against the real model on Bedrock — costs money, needs AWS credentials, never in CI |
 
 ## Tests

@@ -7,3 +7,7 @@ infra/terraform.tfvars
 *.zip
 infra/.build/
 infra/.terraform.lock.hcl
+
+# Swift
+.build/
+.swiftpm/
