@@ -175,6 +175,18 @@ doesn't have its name yet. The name people see is `CFBundleDisplayName`, which c
   way to report or block other users' content (see Risks in
   [product.md](product.md#risks)).
 
+## PWA follow-ups
+
+iOS design changes still to carry back to the PWA (see [product.md](product.md#the-pwa)).
+
+- **Trends chart axis.** The y-axis ticks fall on round steps (5, 10, 20, 25, 50, …), and a
+  timed exercise's ticks are whole durations (15s, 30s, 1m, 2m, …) labelled as durations.
+  The top of the axis is the first tick above the data. The PWA ticks at 0, half and the
+  max, as bare numbers.
+- **Heatmap.** The selected day's line under the grid opens that day; the PWA's only shows
+  it. The first column's month label is left off when the next month starts within two
+  weeks, so the labels don't overlap.
+
 ## Risks
 
 | Risk | Mitigation |

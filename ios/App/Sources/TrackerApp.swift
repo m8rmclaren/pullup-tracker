@@ -38,8 +38,13 @@ struct RootView: View {
     let model: AppModel
 
     var body: some View {
-        NavigationStack {
-            TodayView(model: model)
+        TabView {
+            Tab("Today", systemImage: "target") {
+                NavigationStack { TodayView(model: model) }
+            }
+            Tab("Trends", systemImage: "chart.bar.xaxis") {
+                NavigationStack { TrendsView(model: model) }
+            }
         }
         .task { await model.watchChanges() }
         .task {
